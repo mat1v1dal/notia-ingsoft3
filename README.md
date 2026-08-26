@@ -16,8 +16,9 @@ inmutables, infraestructura como código, seguridad y observabilidad.
 | TP3 | Planificación y trazabilidad | pendiente |
 | TP4 | CI: Pipelines as Code | pendiente |
 
-La **app del semestre** se elige en el TP2 y entra a este mismo repositorio.
-Hasta entonces acá vive el flujo de trabajo y nada más.
+La **app del semestre** es [notia](https://github.com/mat1v1dal/notia) y entra
+a este mismo repositorio en el TP2. Hasta entonces acá vive el flujo de
+trabajo y nada más.
 
 ## Documentos
 
