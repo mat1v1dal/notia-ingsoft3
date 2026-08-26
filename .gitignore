@@ -1,0 +1,22 @@
+# dependencias y artefactos de build
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# secretos: NUNCA se versionan
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# basura del sistema operativo y del editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# logs y datos locales
+*.log
