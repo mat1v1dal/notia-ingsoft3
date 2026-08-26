@@ -20,3 +20,6 @@ Thumbs.db
 
 # logs y datos locales
 *.log
+
+# configuración local del agente
+.claude/
