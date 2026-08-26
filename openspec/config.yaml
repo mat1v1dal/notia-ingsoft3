@@ -1,0 +1,28 @@
+# Configuración de Spec-Driven Development.
+schema: spec-driven
+
+context: |
+  Repositorio de la práctica de Ingeniería del Software 3 (UCC 2026).
+  Hasta el TP2 acá vive únicamente el flujo de trabajo: no hay stack todavía.
+  La app del semestre entra en el TP2 y este contexto se completa entonces.
+
+rules:
+  proposal:
+    - Incluir plan de rollback en cambios riesgosos
+  specs:
+    - Escenarios en formato Given/When/Then
+    - Usar RFC 2119 (MUST, SHALL, SHOULD, MAY)
+  design:
+    - Documentar cada decisión con su porqué y las alternativas descartadas
+  tasks:
+    - Agrupar por fase, numeración jerárquica
+  apply:
+    - Seguir los patrones del código existente
+    tdd: false
+    test_command: ""
+  verify:
+    test_command: ""
+    build_command: ""
+    coverage_threshold: 0
+  archive:
+    - Avisar antes de mergear deltas destructivos
