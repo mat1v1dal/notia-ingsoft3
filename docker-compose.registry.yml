@@ -1,0 +1,62 @@
+# Variante de despliegue: BAJA las imágenes del registry en vez de
+# construirlas. Es la forma en que un entorno que no es el de desarrollo
+# consume el sistema — no tiene el código fuente, sólo el nombre de una imagen.
+#
+#   docker compose -f docker-compose.registry.yml up -d
+#
+# Ojo: se usa SOLO (con -f), no compuesto sobre docker-compose.yml. Si se
+# compusieran, la clave `build` del archivo base seguiría presente y
+# `docker compose build` volvería a construir localmente, que es exactamente
+# lo que este archivo evita.
+#
+# La versión se fija con NOTIA_VERSION en el .env; por defecto, v0.1.0.
+
+name: notia
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: notia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: notia
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notia -d notia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  notia-api:
+    image: ghcr.io/mat1v1dal/notia-api:${NOTIA_VERSION:-v0.1.0}
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://notia:${POSTGRES_PASSWORD}@postgres:5432/notia
+      APP_PASSWORD: ${APP_PASSWORD}
+      APP_SECRET: ${APP_SECRET}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN}
+      PORT: 3000
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/salud || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notia-web:
+    image: ghcr.io/mat1v1dal/notia-web:${NOTIA_VERSION:-v0.1.0}
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - notia-api
+
+volumes:
+  pgdata:

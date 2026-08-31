@@ -7,6 +7,10 @@
 # opcional que vive en docker-compose.full.yml — depende de una API paga y de
 # escanear un QR, así que se mantiene fuera del arranque base a propósito.
 
+# Nombre explícito del proyecto: sin esto Compose lo deriva del nombre de la
+# carpeta, y los volúmenes cambian de nombre si alguien clona en otro lado.
+name: notia
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -31,6 +35,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.api
+    # El mismo nombre con el que se publica en el registry, para que
+    # `docker compose build` deje la imagen lista para `push`.
+    image: ghcr.io/mat1v1dal/notia-api:${NOTIA_VERSION:-v0.1.0}
     restart: unless-stopped
     environment:
       # `postgres` es el nombre del servicio: lo resuelve el DNS de la red de
@@ -54,6 +61,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.web
+    image: ghcr.io/mat1v1dal/notia-web:${NOTIA_VERSION:-v0.1.0}
     restart: unless-stopped
     ports:
       - "${WEB_PORT:-8080}:80"
