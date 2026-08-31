@@ -1,0 +1,64 @@
+# Stack evaluable de notia: frontend + backend + base de datos.
+#
+# Son los tres servicios que necesita cualquiera para levantar el sistema y
+# usarlo desde el navegador. No requiere ninguna credencial de terceros.
+#
+# La ingesta por WhatsApp (worker + Evolution API + OpenAI) es una capa
+# opcional que vive en docker-compose.full.yml — depende de una API paga y de
+# escanear un QR, así que se mantiene fuera del arranque base a propósito.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: notia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: notia
+    volumes:
+      # Volumen nombrado: los datos sobreviven a `down`, y solo los borra
+      # `down -v`. Sin esto, cada recreación del contenedor arranca vacía.
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `depends_on` solo espera a que el contenedor arranque, no a que
+      # Postgres acepte conexiones. Esto último es lo que la API necesita.
+      test: ["CMD-SHELL", "pg_isready -U notia -d notia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  notia-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    restart: unless-stopped
+    environment:
+      # `postgres` es el nombre del servicio: lo resuelve el DNS de la red de
+      # compose. Nada de esto está fijado en el código.
+      DATABASE_URL: postgres://notia:${POSTGRES_PASSWORD}@postgres:5432/notia
+      APP_PASSWORD: ${APP_PASSWORD}
+      APP_SECRET: ${APP_SECRET}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN}
+      PORT: 3000
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/salud || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notia-web:
+    build:
+      context: .
+      dockerfile: Dockerfile.web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    depends_on:
+      - notia-api
+
+volumes:
+  pgdata:
