@@ -51,7 +51,13 @@ $ gh pr view 3 --json number,mergeable,mergeStateStatus
 En la web esto se ve como *"This branch has conflicts that must be resolved"*,
 con el botón de merge deshabilitado.
 
-> 📸 **Falta la captura** del PR #3 mostrando ese aviso.
+> 📸 La captura del aviso corresponde al **PR #7**, no al #3. GitHub deja de
+> mostrar el cartel de conflicto una vez que el pull request está mergeado, así
+> que el ejercicio se reprodujo en dos ramas descartables
+> (`demo/conflicto-a` y `demo/conflicto-b`) para poder fotografiarlo. El
+> conflicto original del PR #3 es el que está documentado arriba y sigue
+> navegable en el historial: el commit de merge `5b7d0e9` dentro de esa rama
+> sólo existe porque hubo que resolverlo a mano.
 
 ### 3. Los marcadores del conflicto
 
@@ -227,8 +233,31 @@ Los digests son la identidad real de cada imagen: el tag `v0.1.0` es una
 etiqueta que se puede mover, el `sha256` no. Es el concepto de **release
 inmutable** que se trabaja en el TP7.
 
-> 📸 **Falta la captura** de los dos paquetes en
-> `github.com/mat1v1dal?tab=packages`, mostrando que son **públicos**.
+Los dos paquetes quedaron con visibilidad **pública**:
+
+```console
+$ gh api /user/packages/container/notia-api -q .visibility
+public
+$ gh api /user/packages/container/notia-web -q .visibility
+public
+```
+
+Que el label diga *Public* es una cosa; que un tercero pueda bajarlas es la
+que importa. Pidiendo un token anónimo al registry —sin ninguna credencial— y
+consultando el manifiesto de cada imagen:
+
+```console
+$ TOKEN=$(curl -s "https://ghcr.io/token?scope=repository:mat1v1dal/notia-api:pull&service=ghcr.io" | jq -r .token)
+$ curl -o /dev/null -w '%{http_code}\n' -H "Authorization: Bearer $TOKEN" \
+    https://ghcr.io/v2/mat1v1dal/notia-api/manifests/v0.1.0
+200
+
+$ # ídem notia-web
+200
+```
+
+`200` sin login es la prueba de que la imagen es accesible para cualquiera.
+Si fueran privadas, el registry devolvería `401`.
 
 ### 6. La variante de registry, probada de verdad
 
