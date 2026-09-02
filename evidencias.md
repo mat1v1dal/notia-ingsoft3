@@ -33,8 +33,12 @@ $ gh api repos/mat1v1dal/notia-ingsoft3/branches/main/protection \
 {"aprobaciones":0,"sin_bypass":true}
 ```
 
-> 📸 **Falta la captura de pantalla** de *Settings → Branches* con la regla
-> configurada. Sacarla antes de entregar.
+![Regla de protección sobre main](evidencias/tp1-1-proteccion-main.png)
+
+Las dos casillas que importan: **Require a pull request before merging**
+tildada con *Require approvals* en cero, y abajo de todo **Do not allow
+bypassing the above settings**, que es la que hace que la regla me alcance
+también a mí.
 
 ### 2. El PR con el conflicto
 
@@ -51,7 +55,9 @@ $ gh pr view 3 --json number,mergeable,mergeStateStatus
 En la web esto se ve como *"This branch has conflicts that must be resolved"*,
 con el botón de merge deshabilitado.
 
-> 📸 La captura del aviso corresponde al **PR #7**, no al #3. GitHub deja de
+![Aviso de conflicto en el pull request](evidencias/tp1-2-conflicto-en-el-pr.png)
+
+> ⚠️ La captura corresponde al **PR #7**, no al #3. GitHub deja de
 > mostrar el cartel de conflicto una vez que el pull request está mergeado, así
 > que el ejercicio se reprodujo en dos ramas descartables
 > (`demo/conflicto-a` y `demo/conflicto-b`) para poder fotografiarlo. El
@@ -95,7 +101,7 @@ versiones alternativas del mismo dato. El razonamiento completo está en
 
 Tag `v1.0.0` sobre `main`, con su release en la pestaña *Releases*.
 
-> 📸 **Falta la captura** de la release publicada.
+![Release v1.0.0 publicada](evidencias/tp1-4-release-v1.0.0.png)
 
 ---
 
@@ -232,6 +238,8 @@ v0.1.0: digest: sha256:3800d6f0126a446afc83a755b3cfd8b8bc65cf9464278564112e2df91
 Los digests son la identidad real de cada imagen: el tag `v0.1.0` es una
 etiqueta que se puede mover, el `sha256` no. Es el concepto de **release
 inmutable** que se trabaja en el TP7.
+
+![Los dos paquetes publicados](evidencias/tp2-5-paquetes-publicados.png)
 
 Los dos paquetes quedaron con visibilidad **pública**:
 
