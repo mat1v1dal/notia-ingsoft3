@@ -1,0 +1,40 @@
+# Ignore específico de la imagen de la API (BuildKit lo toma por el nombre
+# del Dockerfile). El contexto es la raíz del monorepo: pnpm necesita el
+# lockfile y todos los package.json para resolver el workspace.
+
+node_modules
+**/node_modules
+
+# Artefactos de build: se regeneran dentro de la imagen.
+dist
+**/dist
+*.tsbuildinfo
+
+# La API no sirve estáticos en este despliegue: los sirve nginx.
+packages/api/public
+
+# El frontend no entra a esta imagen. Se excluye su código, NO su
+# package.json: pnpm lo necesita para resolver el workspace con
+# --frozen-lockfile, aunque después no instale nada de él.
+packages/web/src
+packages/web/index.html
+packages/web/vite.config.ts
+packages/web/nginx.conf
+
+# Secretos: jamás entran al contexto de build. Una capa de imagen es pública
+# para cualquiera que la baje del registry.
+.env
+.env.*
+!.env.example
+
+# Datos y estado local
+pgdata
+evolution-data
+
+# No cambian lo que se construye, pero invalidan el cache si viajan
+.git
+.github
+.claude
+openspec
+docs
+*.md

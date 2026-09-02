@@ -1,0 +1,30 @@
+# Ignore específico de la imagen del frontend. Más agresivo que el de la API:
+# acá sólo hace falta lo que Vite necesita para compilar la SPA.
+
+node_modules
+**/node_modules
+
+dist
+**/dist
+*.tsbuildinfo
+packages/api/public
+
+# El backend no participa del build del frontend. Se excluyen su código y el
+# del worker: cualquier cambio ahí no tiene por qué invalidar esta imagen.
+packages/api/src
+packages/api/scripts
+packages/worker/src
+
+.env
+.env.*
+!.env.example
+
+pgdata
+evolution-data
+
+.git
+.github
+.claude
+openspec
+docs
+*.md
