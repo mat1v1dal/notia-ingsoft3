@@ -396,6 +396,178 @@ camino crítico.
 
 ---
 
+## TP3 — Planificación y trazabilidad
+
+Proyecto: **https://github.com/users/mat1v1dal/projects/1** (público)
+
+### La duración del sprint, y por qué
+
+**Una semana.**
+
+El calendario de la materia ya impone un ritmo semanal: cada clase presenta un
+práctico y se espera que esté cerrado para la siguiente. Un sprint de dos
+semanas abarcaría dos prácticos, así que la revisión de fin de sprint caería en
+la mitad del trabajo de uno de ellos y no serviría para decidir nada.
+
+El criterio general: **el sprint tiene que terminar cuando hay algo que
+mostrar.** Acá eso pasa cada semana. En un equipo con releases quincenales, dos
+semanas sería lo correcto por la misma razón, no por costumbre.
+
+### El límite de trabajo en progreso, y por qué
+
+**Dos.**
+
+La regla de arranque de la guía es «cantidad de personas más uno», y trabajando
+solo eso da dos. El «más uno» no es holgura arbitraria: es la válvula para
+cuando algo queda esperando —una revisión, una corrida de CI, una respuesta— y
+necesitás avanzar en otra cosa sin abandonar lo primero.
+
+Poner tres sería mentirme: con una sola persona, tres cosas «en progreso»
+significa que dos están detenidas y el tablero deja de reflejar la realidad. Un
+límite que nunca se alcanza no limita nada — y ésa es justamente la señal de
+que está demasiado alto.
+
+Y el límite se alcanzó de verdad durante el práctico: mientras la tarea #19
+estaba en curso, *In Progress* tenía dos items —la historia #18 y esa tarea— o
+sea, exactamente el tope. Al cerrarse #19 el tablero bajó a uno. Un límite que
+se roza es un límite que sirve.
+
+### Diagnóstico de la historia mal escrita
+
+La historia del ejercicio es:
+
+> *Como desarrollador quiero crear la tabla usuarios para guardar los datos.*
+
+**Por qué está mal**: es una **tarea disfrazada de historia**. El beneficiario
+es el propio desarrollador, así que no describe valor para nadie; y «crear la
+tabla usuarios» es un **paso de implementación**, no un resultado observable. No
+se puede verificar que esté bien hecha sin mirar el esquema de la base — y una
+historia se verifica por lo que el usuario puede hacer, no por cómo está
+construida por dentro. Además arrastra la solución al enunciado: fija que la
+respuesta es una tabla, cuando eso es una decisión técnica que debería quedar
+abierta.
+
+**Cómo la reescribiría**:
+
+> *Como visitante quiero registrarme con mi email y contraseña para poder
+> guardar mis notas y recuperarlas desde otro dispositivo.*
+>
+> Criterios de aceptación:
+> - No se puede registrar dos veces el mismo email
+> - Una contraseña de menos de 8 caracteres es rechazada con un mensaje claro
+> - Después de registrarme, entro con esas credenciales y veo mis notas
+
+Ahora el beneficiario es alguien real, el valor está explícito, y los tres
+criterios se comprueban desde afuera sin saber si hay una tabla, dos o un
+documento. La tabla de usuarios sigue haciendo falta — pero es una **tarea**
+hija de esta historia, que es exactamente el lugar donde va.
+
+### Por qué el bug no cuelga de la jerarquía
+
+El bug #21 está **al costado**, no colgando de la historia.
+
+La jerarquía cuenta **lo que planificaste construir**: la épica es el objetivo,
+la historia el valor a entregar, las tareas los pasos. Un bug es un defecto de
+algo **ya entregado** — no era parte del plan, así que no pertenece al árbol.
+Colgarlo de la historia que lo originó tendría además un efecto feo: esa
+historia ya está cerrada, y su barra de progreso pasaría a mentir.
+
+El matiz que importa es **cuándo** aparece el defecto. Si lo encuentro mientras
+la historia está en curso, no es un bug: es que la historia todavía no cumple
+sus criterios de aceptación, y se arregla adentro. Una historia con defectos no
+está terminada. El bug que entrego es del otro caso: algo que ya funcionaba y
+se rompió.
+
+### La trazabilidad, y por qué importa
+
+La cadena quedó cerrada de punta a punta:
+
+```
+tarea  #19  Escribir el workflow de build y tests          [CLOSED]
+  ↑ cerrada por PR #22, commit 6a7c595
+  └─ historia #18  CI: build y tests automáticos en cada PR
+       └─ épica  #17  EPIC: Pipeline DevOps completo para mi app
+```
+
+El PR llevaba `Closes #19` en el cuerpo, así que al mergearse **cerró el issue
+solo**. Nadie tuvo que acordarse de ir a mover una tarjeta, y eso es el punto:
+un tablero que hay que actualizar a mano deja de reflejar la realidad apenas
+alguien se olvida una vez.
+
+Lo que esto compra en serio: dentro de seis meses, parado en cualquier línea de
+`ci.yml`, se puede subir del commit al PR, del PR a la tarea, de la tarea a la
+historia y de ahí a la épica — y recuperar **por qué** ese archivo existe. Es
+la diferencia entre un repositorio que se puede mantener y uno que hay que
+adivinar.
+
+### Sobre el contenido de la jerarquía
+
+La historia #18 —*que cada PR ejecute build y tests*— describe exactamente el
+pipeline que construí en el TP4. No es un ejemplo inventado para llenar el
+tablero: la tarea #19 se cerró documentando el workflow que existe, y sus
+criterios de aceptación se pueden verificar hoy contra el repositorio.
+
+Dos de los cuatro criterios ya se cumplen (el workflow corre en cada PR, y el
+badge está en el README). Los otros dos —que un test que falla bloquee el
+merge, y el reporte de tests como artefacto— **todavía no**: el pipeline hoy
+verifica tipos y builds, pero no corre tests. Por eso la historia queda
+**abierta** y la tarea #20 en *Todo*: son trabajo del TP5.
+
+Que la historia esté a medio cumplir no es un descuido — es lo que hace que el
+tablero diga la verdad.
+
+### Problemas encontrados
+
+**El sprint no se puede crear por API.** Verifiqué que la API GraphQL de GitHub
+no expone ninguna mutation para iteraciones: `createProjectV2Field` con
+`dataType: ITERATION` crea el campo pero con `duration: 0` y sin iteraciones, y
+no hay forma de completarlas. La configuración del sprint es sí o sí por la
+interfaz web. Lo mismo el límite de trabajo en progreso y la automatización del
+tablero, que son propiedades de la **vista** y no del proyecto.
+
+Es una limitación real de la plataforma y conviene saberla: todo lo demás del
+TP —labels, issues, jerarquía de sub-issues, estados del tablero, el PR que
+cierra el issue— sí se scriptea, y quedó scripteado.
+
+**`gh` no tenía el flag de sub-issues.** La versión instalada es la 2.83 y
+`--add-sub-issue` llegó en la 2.94. En vez de actualizar `gh` a mitad de una
+entrega, armé la jerarquía con la API REST
+(`POST /repos/{owner}/{repo}/issues/{n}/sub_issues`), que además pide el **id**
+del issue y no su número — un detalle que cuesta un rato descubrir.
+
+### Declaración de uso de IA
+
+Usé **Claude Code** como asistente. Fue asistida la creación de los labels, los
+cinco issues, la jerarquía de sub-issues por API, el proyecto y los estados del
+tablero, el PR de trazabilidad, y la redacción de esta sección.
+
+No fueron asistidas las dos decisiones que el práctico pide justificar: la
+duración del sprint y el número del límite de trabajo en progreso. Tampoco el
+diagnóstico de la historia mal escrita ni su reescritura.
+
+**Cómo lo verifiqué.** Todo lo de esta sección se comprobó contra la API, no
+por captura:
+
+- **La jerarquía es navegable**, consultada por GraphQL: desde la tarea #19 se
+  llega a `parent` #18 y a `parent.parent` #17. Son sub-issues reales, no
+  task-lists.
+- **El issue se cerró solo**: consulté el `ClosedEvent` de #19 y su `closer` es
+  el PR #22 con `merged: true`, y de ahí al commit `6a7c595`.
+- **El tablero tiene dos items en progreso**, que es el límite declarado.
+- **El proyecto es público**, condición que el enunciado marca como no opcional.
+
+- **La automatización «cerrar → Done» funciona**, y no hubo que configurarla:
+  los proyectos nuevos la traen activa. Al mergearse el PR #22, el issue #19 se
+  cerró solo y su tarjeta pasó de *In Progress* a *Done* sin que nadie la
+  tocara. Lo comprobé listando el tablero después del merge.
+
+Lo que **no** puedo declarar como verificado por mí: la configuración del
+sprint y el límite de trabajo en progreso como propiedad de la vista se cargan
+por la interfaz web, porque la API no los expone. Se ven en el proyecto
+público.
+
+---
+
 ## TP4 — CI: Pipelines as Code
 
 ### Estructura del pipeline
