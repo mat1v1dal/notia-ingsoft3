@@ -15,8 +15,8 @@ inmutables, infraestructura como código, seguridad y observabilidad.
 |---|---|---|
 | TP1 | Git colaborativo | ✅ `v1.0.0` |
 | TP2 | Contenedores: la app del semestre | ✅ `v2.0.0` |
-| TP3 | Planificación y trazabilidad | pendiente |
-| TP4 | CI: Pipelines as Code | pendiente |
+| TP3 | Planificación y trazabilidad | ✅ `v3.0.0` — [tablero](https://github.com/users/mat1v1dal/projects/1) |
+| TP4 | CI: Pipelines as Code | ✅ `v4.0.0` |
 
 ## La app del semestre: notia
 
