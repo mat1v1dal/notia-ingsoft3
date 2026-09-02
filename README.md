@@ -1,5 +1,7 @@
 # Ingeniería del Software 3 — UCC 2026
 
+[![CI](https://github.com/mat1v1dal/notia-ingsoft3/actions/workflows/ci.yml/badge.svg)](https://github.com/mat1v1dal/notia-ingsoft3/actions/workflows/ci.yml)
+
 Repositorio de la práctica. Ingeniería en Sistemas, 4to año.
 Docente: Ing. Ariel Schwindt.
 
