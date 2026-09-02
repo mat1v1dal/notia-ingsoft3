@@ -393,3 +393,144 @@ WhatsApp viva y de consumo real contra OpenAI. De ése sólo validé la sintaxis
 con `docker compose config`. Es coherente con la decisión del TP: la capa que
 no se puede verificar en cualquier máquina es justamente la que saqué del
 camino crítico.
+
+---
+
+## TP4 — CI: Pipelines as Code
+
+### Estructura del pipeline
+
+Tres jobs, sin dependencias entre sí, así que **corren en paralelo**:
+
+| Job | Qué hace |
+|---|---|
+| `Typecheck` | `pnpm typecheck` sobre los cuatro paquetes |
+| `Build imagen del backend` | construye con `Dockerfile.api` |
+| `Build imagen del frontend` | construye con `Dockerfile.web` |
+
+Corren en paralelo porque **no dependen uno del otro**: ninguno consume la
+salida del anterior. Poner `needs:` entre ellos haría que el tiempo total
+fuera la suma en vez del máximo, sin ganar nada. Los dos builds arrancaron a
+las 18:05:54 exactamente, y eso está en `evidencias.md`.
+
+Lo que **no** comparten dos jobs es todo: cada uno corre en una máquina
+virtual limpia, con su propio checkout y su propio filesystem. Si el frontend
+necesitara un artefacto del backend, habría que publicarlo con
+`actions/upload-artifact` y bajarlo del otro lado. Lo único que comparten acá
+es el cache, y por eso cada uno usa su propio `scope`.
+
+### Por qué construye con mi Dockerfile en vez de compilar por su cuenta
+
+Porque **el artefacto que se despliega tiene que ser el mismo que se
+verifica**. Si el pipeline tuviera su propia receta —`npm ci && npm run
+build`— estaría verificando algo distinto de lo que después se despliega, y
+las dos definiciones se separarían con el tiempo sin que nadie se entere. El
+día que fallara producción, el pipeline seguiría en verde.
+
+Construir con el Dockerfile del TP2 hace que el pipeline verifique
+exactamente la misma definición de build que el TP6 va a desplegar.
+
+### Qué cachea, y qué pasa si desaparece
+
+Cache de **capas de Docker**, con backend `type=gha` (el cache de GitHub
+Actions), y un `scope` distinto por imagen para que el build de una no
+invalide el de la otra. El job de typecheck además cachea el store de pnpm.
+
+Se reutilizan las capas cuyas instrucciones y archivos de entrada no
+cambiaron: en la práctica, la instalación de dependencias, que es la más cara.
+Se rehacen desde el primer `COPY` cuyo contenido cambió y todas las que le
+siguen — por eso los Dockerfiles copian los `package.json` y corren
+`pnpm install` **antes** de copiar el código: si sólo cambió el código, la
+capa de dependencias sobrevive.
+
+Si el cache desaparece **no se rompe nada**: la corrida siguiente reconstruye
+todo desde cero y tarda más. El cache es una optimización, nunca una
+dependencia — un pipeline que no puede correr sin su cache está roto.
+
+En la segunda corrida el log muestra **14 líneas `CACHED`**.
+
+### El pipeline como gate
+
+`main` exige ahora **dos** condiciones para aceptar un merge:
+
+1. Que el cambio venga por pull request (TP1, sigue vigente).
+2. Que los tres checks estén en verde.
+
+Y sigue con `enforce_admins`, así que las dos me alcanzan también a mí.
+
+**`strict: true`** significa que la rama tiene que estar **actualizada con
+`main`** antes de mergear. Sin eso podría pasar lo siguiente: dos PRs verdes
+por separado, cada uno probado contra un `main` viejo, que al integrarse se
+rompen entre sí. Es el *semantic conflict*: no hay conflicto de texto, pero el
+resultado no funciona. `strict` obliga a re-verificar contra el `main` actual.
+
+### El bug que encontró el propio gate
+
+Al romper el build a propósito me encontré con que **el pipeline pasaba en
+verde igual**. El PR #14 importaba un módulo inexistente y los tres checks
+daban `SUCCESS`.
+
+La causa es la misma decisión de diseño que documenté en el TP2: el backend no
+compila. Los `tsconfig` tienen `noEmit: true` y el código corre con `tsx`, así
+que el Dockerfile sólo instala dependencias y copia archivos — **la imagen se
+construye igual aunque el código esté roto**. El pipeline estaba verificando
+el empaquetado, no el código.
+
+Agregué el job `Typecheck`, que para este proyecto es el equivalente de
+compilar. Con él, la secuencia funcionó como corresponde:
+
+```
+Typecheck: FAILURE  →  mergeStateStatus: BLOCKED
+   ↓ fix
+Typecheck: SUCCESS  →  mergeStateStatus: CLEAN  →  merge
+```
+
+Es la lección más útil del práctico: **un gate verde no significa nada si no
+sabés qué está verificando.** El mío daba verde sobre código que no compilaba,
+y sólo lo descubrí porque lo rompí a propósito. Un pipeline que nunca falló no
+se sabe si funciona — igual que la protección de rama del TP1.
+
+### Estrategia de branching, ahora con criterio
+
+El TP1 me dio GitHub Flow como regla de la materia. Con el pipeline encima la
+mantengo, y ahora puedo justificarla: ramas cortas que salen de `main` y
+vuelven por PR, con `main` siempre desplegable.
+
+La alternativa clásica es GitFlow, con ramas `develop` y `release` de larga
+vida. No lo elijo porque su razón de ser es coordinar **entregas por lotes en
+fechas fijas**, y acá cada merge a `main` puede ir a producción. Ramas de
+larga vida además multiplican los conflictos —el TP1 me mostró por qué— y
+retrasan la integración, que es exactamente lo que la integración continua
+busca evitar.
+
+### Problemas encontrados
+
+**El gate verde sobre código roto**, arriba. Es el hallazgo del TP.
+
+**El primer intento de romper el build no rompió nada.** Antes de entender la
+causa asumí que un import inexistente haría fallar cualquier build. Verificar
+la demostración del gate —en vez de darla por hecha— fue lo que expuso el
+problema real.
+
+### Declaración de uso de IA
+
+Usé **Claude Code** como asistente. Fue asistida la escritura de
+`.github/workflows/ci.yml`, la configuración de los required status checks por
+API, y la redacción de esta sección y la del TP4 en `evidencias.md`.
+
+No fue asistida la decisión de agregar el job de typecheck: surgió de ver que
+el pipeline pasaba en verde sobre código roto, y de entender por qué.
+
+**Cómo lo verifiqué.** Todo lo de esta sección se ejecutó:
+
+- **El paralelismo**, contra los timestamps de los dos jobs: mismo segundo de
+  arranque.
+- **El cache**, contando las líneas `CACHED` del log de la segunda corrida: 14.
+- **El gate**, con la secuencia completa: `Typecheck: FAILURE` →
+  `mergeStateStatus: BLOCKED` → fix → `SUCCESS` → `CLEAN` → merge.
+- **Los checks requeridos**, leyendo la protección de vuelta desde la API.
+
+Lo que **no** puedo declarar como verificado: el pipeline todavía no corre los
+tests. `pnpm test` existe y pasa 79/79 en local, pero incorporarlo al workflow
+es el TP5 y no está dado. El pipeline de hoy verifica que el código tipa y que
+las imágenes construyen — más de lo que había, menos de lo que va a haber.
