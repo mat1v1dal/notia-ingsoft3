@@ -335,3 +335,97 @@ $ pnpm test
 $ pnpm typecheck
 (sin salida: limpio)
 ```
+
+---
+
+## TP4 — CI: Pipelines as Code
+
+> El TP4 no exige `evidencias.md` —el repositorio es público y las corridas se
+> ven en la pestaña *Actions*—, pero las salidas clave quedan acá para que la
+> defensa no dependa de encontrar la corrida correcta.
+
+### 1. Los jobs corren en paralelo
+
+```console
+$ gh run view <id> --json jobs
+Build imagen del frontend: success (18:05:54 → 18:06:35)
+Build imagen del backend:  success (18:05:54 → 18:06:35)
+```
+
+**Mismo segundo de arranque**: no hay `needs:` entre ellos, así que GitHub los
+despacha a la vez. El tiempo total del pipeline es el del job más lento, no la
+suma.
+
+### 2. El cache de capas se reutiliza
+
+Segunda corrida sobre la misma rama, contando las capas reutilizadas en el log:
+
+```console
+$ gh run view <id> --log | grep -ic CACHED
+14
+```
+
+### 3. El gate bloqueando un merge
+
+PR [#14](../../pull/14), con un import a un módulo inexistente:
+
+```console
+$ gh pr view 14 --json mergeable,mergeStateStatus,statusCheckRollup
+{
+  "checks": [
+    "Typecheck: FAILURE",
+    "Build imagen del backend: SUCCESS",
+    "Build imagen del frontend: SUCCESS"
+  ],
+  "estado": "BLOCKED"
+}
+```
+
+`BLOCKED` es el gate actuando: el merge no está disponible aunque no haya
+conflictos.
+
+Después del fix, misma rama:
+
+```console
+$ gh pr view 14 --json mergeStateStatus,statusCheckRollup
+{
+  "checks": [
+    "Typecheck: SUCCESS",
+    "Build imagen del backend: SUCCESS",
+    "Build imagen del frontend: SUCCESS"
+  ],
+  "estado": "CLEAN"
+}
+```
+
+La secuencia entera queda en el historial de corridas:
+
+```console
+$ gh run list
+success  [main]
+success  [fix/demo-gate]     ← verde después del fix
+failure  [fix/demo-gate]     ← el build roto
+success  [feat/ci-typecheck]
+```
+
+### 4. Las dos condiciones que exige `main`
+
+```console
+$ gh api repos/mat1v1dal/notia-ingsoft3/branches/main/protection \
+    -q '{pr: (.required_pull_request_reviews != null), sin_bypass: .enforce_admins.enabled, strict: .required_status_checks.strict, checks: .required_status_checks.contexts}'
+{
+  "pr": true,
+  "sin_bypass": true,
+  "strict": true,
+  "checks": ["Build imagen del backend", "Build imagen del frontend", "Typecheck"]
+}
+```
+
+Pull request obligatorio **y** tres checks en verde, sin bypass para
+administradores. `strict: true` exige además que la rama esté actualizada con
+`main` antes de mergear.
+
+### 5. El badge
+
+En la primera línea del [README](README.md): refleja el estado de `main` y
+enlaza a las corridas.
