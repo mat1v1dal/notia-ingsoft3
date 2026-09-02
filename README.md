@@ -1,4 +1,4 @@
-# Ingeniería del Software 3 — UCC 2026
+# Ingeniería del Software 3 — UCC 2026 · versión A
 
 Repositorio de la práctica. Ingeniería en Sistemas, 4to año.
 Docente: Ing. Ariel Schwindt.
