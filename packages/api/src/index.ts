@@ -5,7 +5,6 @@ import { existsSync } from "node:fs";
 import { relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createApp } from "./app.js";
-import { estaFuncionNoExiste } from "./no-existe.js";
 
 function requerido(nombre: string): string {
   const valor = process.env[nombre];
