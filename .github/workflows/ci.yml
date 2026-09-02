@@ -16,6 +16,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  verificacion:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          # Cachea el store de pnpm entre corridas: la instalación de
+          # dependencias es lo más lento de este job.
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # El backend corre TypeScript directo con tsx: no hay `tsc` que emita,
+      # así que la imagen se construye igual aunque el código no tipe. El
+      # equivalente de "compila" para este proyecto es el typecheck, y sin
+      # este job el pipeline no verificaría nada del backend.
+      - run: pnpm typecheck
+
   backend:
     name: Build imagen del backend
     runs-on: ubuntu-latest
