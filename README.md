@@ -130,4 +130,5 @@ packages/worker   la ingesta: OpenAI + notificaciones
 
 - [`decisiones.md`](decisiones.md) — bitácora de decisiones, acumulativa.
 - [`evidencias.md`](evidencias.md) — capturas y salidas que respaldan cada TP.
+- [`COMANDOS.md`](COMANDOS.md) — todos los comandos para operar el proyecto y verificar cada punto.
 - [`AGENTS.md`](AGENTS.md) — cómo trabaja un agente de IA sobre este repositorio.
