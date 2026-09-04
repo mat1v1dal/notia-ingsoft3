@@ -66,7 +66,11 @@ services:
     ports:
       - "${WEB_PORT:-8080}:80"
     depends_on:
-      - notia-api
+      # Igual que la API con Postgres: esperar a que el contenedor arranque no
+      # alcanza, hay que esperar a que la API conteste. Si no, nginx puede
+      # levantar antes de que exista el registro DNS.
+      notia-api:
+        condition: service_healthy
 
 volumes:
   pgdata:
