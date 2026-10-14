@@ -10,7 +10,7 @@ import {
 } from "@notia/core/items";
 import { chats, itemChanges, items } from "@notia/core/schema";
 import { undoToken, verifyUndoToken } from "@notia/core/undo";
-import { desc, eq, isNull } from "drizzle-orm";
+import { desc, eq, isNull, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { normalizeEvolutionMessage } from "./evolution.js";
@@ -195,7 +195,19 @@ export function createApp(cfg: AppConfig) {
     return c.redirect(`/#/item/${cambio.itemId}?deshecho=1`);
   });
 
-  app.get("/salud", (c) => c.json({ ok: true }));
+  // Lo lee el healthcheck de compose y el smoke test del pipeline. Toca la
+  // base a propósito: un /salud que sólo dice "el proceso vive" da verde con
+  // la connection string rota. Y dice qué commit corre, que es lo único que
+  // permite comprobar desde afuera que lo desplegado es lo verificado.
+  app.get("/salud", async (c) => {
+    const commit = process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? null;
+    try {
+      await db.execute(sql`select 1`);
+      return c.json({ ok: true, db: true, commit });
+    } catch {
+      return c.json({ ok: false, db: false, commit }, 503);
+    }
+  });
 
   return app;
 }
