@@ -706,3 +706,318 @@ Lo que **no** puedo declarar como verificado: el pipeline todavía no corre los
 tests. `pnpm test` existe y pasa 79/79 en local, pero incorporarlo al workflow
 es el TP5 y no está dado. El pipeline de hoy verifica que el código tipa y que
 las imágenes construyen — más de lo que había, menos de lo que va a haber.
+
+---
+
+## TP5 — Calidad automatizada: tests, cobertura y el umbral que frena un merge
+
+Escrito *as-built*, con cada decisión al lado del enlace que la prueba.
+
+### Las herramientas, fila por fila
+
+El stack no es el de la cátedra (.NET + vitest): acá los dos lados son
+TypeScript y los dos se testean con **vitest 3.2.7**.
+
+| Lo que se pide | Acá |
+|---|---|
+| Dónde viven los tests | al lado del código: `algo.test.ts` |
+| Parametrizado | `test.each` |
+| Que la dependencia entre desde afuera | parámetro de la función (`fetchImpl`), con el real como default |
+| Fabricar el doble | `vi.fn()` |
+| Medir la cobertura | `@vitest/coverage-v8` |
+| Umbral que rompe el build | `coverage.thresholds` en la config de cada lado |
+| Qué entra en la cuenta | `coverage.include` / `coverage.exclude` |
+| Reporte legible | `text` en consola, `html` y `lcov` como artefacto, `json-summary` para el Summary |
+
+### Qué elegí testear y por qué eso
+
+La suite ya tenía 79 tests sobre las reglas de negocio de `core` (items,
+log de cambios, alcance del agente, scheduler, ingesta) contra una Postgres
+real en memoria. Lo que **no** tenía era nada en las fronteras: los dos
+módulos que salen a la red y la capa HTTP estaban en **0 %**.
+
+Elegí ir ahí porque es donde un bug duele más:
+
+- **`app.ts`, la capa HTTP** ([`app.test.ts`](packages/api/src/app.test.ts)):
+  del otro lado están WhatsApp y el navegador. Un bug en «quién entra» es un
+  webhook abierto o una API sin contraseña. Se prueba con `app.request` de
+  Hono, sin socket: la apikey del webhook, la contraseña (tres variantes
+  en un `test.each`), la cookie, un cuerpo que no es JSON, y el link de
+  deshacer, que es el único camino **sin cookie** y por eso el más delicado.
+- **`notifier.ts`** ([`notifier.test.ts`](packages/core/src/notifier.test.ts)):
+  es el único módulo que *escribe* en WhatsApp. El assert que importa es
+  que el destino sea **el chat propio** y nunca el grupo observado: si eso
+  se invierte, el sistema le contesta a otra gente.
+- **`api.ts`, el cliente del front** ([`api.test.ts`](packages/web/src/api.test.ts)):
+  qué URL arma, cómo escapa un `@` en el path, y que un 401 se convierta en
+  `SinSesion`, que es lo que la app usa para caer al login en vez de dejar
+  pantallas a medias.
+- **Las fuentes del texto en `evolution.ts`**: WhatsApp manda el texto en
+  cinco campos distintos según sea un mensaje plano, uno con link o el
+  caption de un adjunto. Es *una* regla con cinco formas de llegar: un
+  `test.each`.
+- **Los bordes de `agrupar` en `fecha.ts`**: la ventana de «Esta semana»
+  cierra a los siete días exactos. Un caso a cada lado del borde
+  (`18:00:00Z` → Esta semana, `18:00:01Z` → Después): si alguien cambia el
+  `<=` por `<`, el primero se pone en rojo.
+
+De 79 tests a 116 ([PR #26](https://github.com/mat1v1dal/notia-ingsoft3/pull/26)),
+y después a 124 con los del PR de demostración.
+
+### El refactor para poder mockear
+
+Ni el notifier ni el cliente de la API se podían testear: los dos llamaban
+al **`fetch` global**. No había por dónde meter un doble sin parchear el
+global, que es frágil y se filtra entre tests.
+
+El cambio fue el mismo de los dos lados: **la dependencia entra por
+parámetro**, con el `fetch` real como default.
+
+```ts
+// antes                                      // después
+createEvolutionNotifier(opts)                 createEvolutionNotifier(opts, fetchImpl = (url, init) => fetch(url, init))
+export const api = { ... fetch(url) ... }     export function crearApi(fetchImpl) { ... }
+                                              export const api = crearApi((url, init) => fetch(url, init))
+```
+
+Las vistas no cambian: siguen importando `api`. El default va envuelto en
+una flecha y no como `crearApi(fetch)` a secas porque en el navegador
+`fetch` llamado sin `window` como `this` tira *Illegal invocation*.
+
+**Mock y stub, en mis tests.** El doble de `fetch` del test del notifier es
+un **mock**: el assert es sobre *cómo lo llamaron* (`toHaveBeenCalledTimes`,
+la URL, el header `apikey`, el `number` del body). El doble del test de
+error es un **stub**: sólo devuelve un 500 y lo que se verifica es la
+reacción del código, no la llamada.
+
+### El umbral: el número, la métrica y por qué
+
+Medido con la suite de hoy, antes de elegir:
+
+| | Líneas | Ramas | Umbral elegido |
+|---|---|---|---|
+| Backend (`core` + `api` + `worker`) | 93,5 % (777/831) | **82,45 %** (188/228) | **90 líneas / 80 ramas** |
+| Frontend (`web`, lógica pura) | 98,19 % (109/111) | **93,61 %** (44/47) | **95 líneas / 90 ramas** |
+
+Va sobre **las dos métricas**, por dos motivos. El primero es que miden
+cosas distintas: líneas dice *qué se ejecutó*, ramas dice *qué decisiones se
+tomaron en los dos sentidos*. Un `if` cuya condición siempre fue verdadera
+tiene el 100 % de sus líneas cubiertas y la mitad de sus ramas. El segundo
+es de vitest 3: una función que ningún test llama **no suma ramas**, sólo
+líneas sin cubrir. Con umbral únicamente de ramas, la demostración de abajo
+no se habría puesto roja.
+
+**Por qué esos números.** No están copiados: salen de la medición, con un
+margen que yo decido.
+
+- Backend, líneas 90: 3,5 puntos por debajo de lo medido, unas 30 líneas
+  de margen. Suficiente para que un fix de cinco líneas no frene el merge
+  por sí solo, insuficiente para que entre un módulo nuevo sin tests.
+- Backend, ramas 80: casi al ras (2,45 puntos, 6 ramas). Es la métrica que
+  más cuesta subir y la que más dice; la dejo tirante a propósito.
+- Frontend, 95 / 90: la lógica es chica (111 líneas), así que cualquier
+  función nueva sin tests mueve el número varios puntos. El umbral alto es
+  lo que hace que una función de veinte líneas sin tests frene (abajo).
+
+**Qué pasaría si mañana lo subo diez puntos.** Backend a 100 de líneas es
+imposible sin tests sobre el `PATCH /api/items/:id`, el `PATCH` de chats y
+el deshacer de una *edición* (líneas 101-137 y 178-190 de `app.ts`), que
+son lo que hoy queda sin cubrir. Ramas a 90 pide cubrir las 10 ramas de
+`scheduler.ts` y las 10 de `agent.ts` que faltan, casi todas `??` y `?.`
+sobre nulos que la base no produce. Es trabajo, no magia, y el reporte dice
+exactamente cuál.
+
+### Qué dejé afuera de la cuenta, y por qué
+
+Todo está en los `exclude` de [`vitest.backend.config.ts`](vitest.backend.config.ts)
+y [`vitest.web.config.ts`](vitest.web.config.ts), comentado ahí mismo.
+
+| Afuera | Por qué |
+|---|---|
+| `api/src/index.ts`, `worker/src/index.ts` | El arranque: leen variables de entorno y encienden el servidor o el loop. Se verifican levantando el stack (TP2), no con unit tests. |
+| `core/src/schema.ts`, `db.ts`, `index.ts` | Definición de datos, tipos y re-exports. No hay lógica que pueda fallar. |
+| `core/src/testing.ts` | Es infraestructura **de** los tests (la Postgres en memoria). Contarla sería medirse a uno mismo. |
+| `core/src/connect.ts` | La conexión real a Postgres y el `migrate` al arrancar. Se prueba con `docker compose up`. |
+| `worker/src/openai-client.ts` | Adaptador fino al SDK de OpenAI: traduce argumentos. Lo que tiene lógica —el mapeo de la respuesta— está en `openai-mapping.ts` y **sí** se mide. |
+| `web/src/**/*.tsx` | Componentes React. Los unit tests del front son sin DOM, y la interfaz se verifica end-to-end contra la app desplegada en el TP7. |
+| `migrations/` | Generado por drizzle-kit. |
+
+Lo que **no** dejé afuera y podría haber tentado: `app.ts`. Es la capa
+HTTP, y sacarla habría subido el número del backend a 96 %. Pero es donde
+está la autenticación; excluirla sería mentirse.
+
+### El ejercicio del camino sin cubrir
+
+Abrí el reporte del frontend
+([`coverage/frontend/index.html`, artefacto `cobertura-frontend`](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514715113))
+y elegí la rama de código marcada en `fecha.ts`, línea 94:
+
+```ts
+const porFecha = (a: T, b: T) =>
+  new Date(a.dueAt ?? 0).getTime() - new Date(b.dueAt ?? 0).getTime();
+```
+
+1. **Qué línea es.** El `?? 0`: la rama que se recorre cuando `dueAt` es
+   `null`.
+2. **Qué entrada la recorrería.** Ninguna. `porFecha` sólo ordena los
+   cubos que no son «Sin fecha», y un item con `dueAt: null` va siempre a
+   ese cubo, que no se ordena. Para llegar a ese `?? 0` habría que meter
+   un item sin fecha en el cubo «Hoy», y el `if (!item.dueAt)` de arriba
+   lo impide.
+3. **Qué decidí.** No agregué el test, porque no existe la entrada. El
+   `?? 0` está porque el tipo dice `string | null` y el compilador exige
+   tratarlo; la alternativa es un `!` que le promete al compilador algo
+   que el código ya garantiza. Lo dejo: prefiero un `?? 0` inerte a un
+   `!` que, si alguien reordena el `if`, pasa a ser una excepción.
+
+### Por qué cobertura alta no garantiza calidad: mi ejemplo
+
+Este test suma cobertura y no verifica nada:
+
+```ts
+test("notifier", async () => {
+  await createEvolutionNotifier(OPCIONES, async () => respuesta(201)).send("hola");
+});
+```
+
+Ejecuta el 100 % de las líneas del camino feliz de `notifier.ts`. Si mañana
+alguien cambia `number: opts.destinoJid` por `number: opts.instance` —y el
+aviso empieza a salir a cualquier lado—, sigue verde. El test real
+([`notifier.test.ts`](packages/core/src/notifier.test.ts)) tiene el assert
+sobre el body de la llamada, y es *eso* lo que se pondría en rojo.
+
+Cobertura mide *qué se ejecutó*, no *qué se comprobó*. Un 80 % de
+cobertura quiere decir que el 80 % de las líneas corrieron bajo algún test;
+cuántas de ésas tienen un assert que las vigile, no lo dice. La manera de
+comprobarlo es invertir una regla y ver si algo se pone en rojo —el criterio
+del enunciado—, o automatizarlo con *mutation testing*.
+
+### El Pull Request bloqueado, y el que queda abierto
+
+**La secuencia completa: [PR #28](https://github.com/mat1v1dal/notia-ingsoft3/pull/28).**
+
+`ItemFila` llamaba a `new URL(item.url)` en el render. El agente copia la
+URL de un mensaje de WhatsApp, y si lo que llega no es una URL válida, la
+excepción subía por React y vaciaba la lista entera. Es un bug real, y el
+fix es una función nueva, `etiquetaDeEnlace`, con seis caminos adentro.
+
+1. **Primer push: la función, sin tests.** Compila, y los 116 tests pasan.
+   El check **`Tests y cobertura del frontend`** se pone en rojo igual.
+   [Corrida roja](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514922263),
+   y el log lo dice con todas las letras:
+
+   ```
+   Tests  22 passed (22)
+   All files  |   85.15 |    93.75 |   78.94 |   85.15 |
+    enlace.ts |       0 |      100 |     100 |       0 | 10-30
+   ERROR: Coverage for lines (85.15%) does not meet global threshold (95%)
+   ```
+
+   Frenó por **líneas**: 85,15 contra 95. Las ramas **no se movieron**
+   (93,75 %): es el comportamiento de vitest 3 que anticipa la guía, una
+   función que nadie llama no suma ramas. Con umbral sólo de ramas, este
+   PR habría pasado.
+
+2. **Los tests que faltaban**
+   ([`enlace.test.ts`](packages/web/src/enlace.test.ts)): uno por camino
+   que la función declara —sin link, vacío, válido, con `www.`, roto, y el
+   recorte en su borde exacto—. Ocho tests, porque tres entradas del
+   primer caso van en un `test.each`.
+   [Corrida verde](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38515101084):
+   98,43 % de líneas, 94,91 % de ramas.
+
+3. Merge.
+
+**El freno vigente, en rojo: PR #TODO** — abierto desde `main` después del
+merge del #28, con otra función sin tests, y queda así hasta la defensa.
+
+### Por qué este freno es distinto del del TP4, y qué deja pasar igual
+
+El gate del TP4 frena cuando **la máquina dice que algo no anda**: no tipa,
+la imagen no construye. El de esta semana frena por **un criterio que
+escribí yo**: el código del PR #28 compilaba y pasaba todos los tests, y
+quedó bloqueado por un número que elegí dos secciones más arriba. Es la
+primera vez en el semestre que lo que frena no es un error sino una
+política.
+
+Lo que ninguno de los tres guardianes de `main` detecta: que el código haga
+**lo que se pidió**. Un test verifica lo que el autor creyó que había que
+verificar; la cobertura, que ese test pasó por ahí; el typecheck, que los
+tipos cierran. Si `etiquetaDeEnlace` tuviera que mostrar el path y no el
+dominio, los tres estarían verdes. Eso lo ve una revisión de código —y
+hoy una parte la puede hacer un agente de IA: leer el PR contra el issue,
+señalar un assert que no verifica nada, un caso de borde que falta. Lo que
+queda afuera aunque lo use: **decidir si el comportamiento es el correcto**
+para el usuario, porque eso no está escrito en ningún lado del repo.
+
+### Por qué los tests no corren adentro del Dockerfile
+
+La guía pone la suite en una etapa intermedia de la imagen, y el pipeline
+la construye con `target` y la corre con `docker run`. Lo evalué y lo
+descarté: el backend no compila (corre TypeScript con `tsx`) y el toolchain
+de tests vive en las `devDependencies` de la raíz del monorepo, no en
+ninguna imagen. Meterlo habría sido agregar una etapa, un `target`, un
+`docker run` y un volumen montado para terminar ejecutando el mismo
+`pnpm cov:backend`. El principio que la guía defiende —**una sola receta,
+la misma en local y en CI**— se cumple igual: la receta está en
+`package.json`, y el pipeline la invoca sin saber qué hay adentro. Está
+contado también en [`.github/workflows/README.md`](.github/workflows/README.md).
+
+### Problemas encontrados
+
+**Un check en rojo que no es *required* no frena nada.** Cuando el PR #28
+se puso rojo, su estado de merge era `UNSTABLE`, no `BLOCKED`: los dos
+checks nuevos todavía no estaban en la lista de *required status checks* de
+`main`, que seguía exigiendo sólo los tres del TP4. El rojo era visible y
+no bloqueaba. Se resuelve agregando los dos nombres a la protección por API
+(como en el TP4), y **no se puede hacer antes** de que el PR #26 entre:
+un check *required* que ningún workflow reporta deja el PR esperando para
+siempre.
+
+**`projects` de vitest exige nombres únicos.** Las dos configs heredaban el
+`name` del `package.json` de la raíz y vitest se negaba a arrancar:
+*Project name "notia" is not unique*. Un `name` por config.
+
+**`fetch` suelto en el navegador.** `crearApi(fetch)` funciona en Node y
+tira *Illegal invocation* en Chrome, porque `fetch` necesita `window` como
+`this`. De ahí la flecha en el default.
+
+**`res.json()` es `unknown` en Hono.** Los tests de `app.ts` necesitan un
+cast por respuesta para que el typecheck cierre. Es correcto que sea
+`unknown`: la respuesta es texto hasta que alguien la valida.
+
+### Declaración de uso de IA
+
+Usé **Claude Code** como asistente. Fue asistida la escritura de los tests
+nuevos (`notifier.test.ts`, `api.test.ts`, `app.test.ts`, `enlace.test.ts`,
+los `test.each` de `evolution.test.ts` y `fecha.test.ts`), los dos refactors
+para inyectar `fetch`, las dos configs de vitest, los jobs nuevos de
+`ci.yml`, el script del Summary, `etiquetaDeEnlace`, y la redacción de esta
+sección.
+
+No fue asistida la elección de **qué** testear (las fronteras, por el
+razonamiento de arriba) ni los números del umbral, que salen de la medición.
+
+**Qué verifica cada assert, y qué no está cubierto.** Lo escribí test por
+test al lado de cada uno, y en la sección de qué elegí testear. Lo que queda
+sin cubrir lo dice el reporte: en `app.ts`, el `PATCH` de items y de chats y
+el deshacer de una edición; en `api.ts`, `crear` y `editar`; en `core`, las
+ramas de nulos de `scheduler.ts` y `agent.ts`.
+
+**Cómo lo verifiqué.** Todo lo de esta sección se ejecutó:
+
+- La suite y el typecheck, en local, en cada paso: 116 y después 124 tests
+  en verde, typecheck limpio.
+- La cobertura, en local y en CI, con los números de arriba; en CI,
+  [la corrida del PR #27](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514715113)
+  dejó los artefactos `cobertura-backend` y `cobertura-frontend`.
+- Que el umbral **frena de verdad**, dos veces: en local, forzando un umbral
+  de 99 % por línea de comando (`exit 1` con el `ERROR: Coverage…`), y en CI
+  con el PR #28.
+- El script del Summary, en sus tres salidas: tabla, archivo inexistente,
+  cero archivos medidos.
+
+Lo que **no** puedo declarar como verificado: la tabla del Summary en la
+página del run la vi en local (es lo que imprime el script), pero la página
+de la corrida no se puede leer sin sesión desde fuera. Queda para abrirla a
+mano antes de la defensa.
