@@ -1,10 +1,12 @@
 import { defineConfig } from "vitest/config";
 
+/**
+ * `pnpm test` corre las dos suites juntas. La cobertura, en cambio, se mide
+ * por lado con `--config`: cada uno tiene su propio umbral (ver
+ * vitest.backend.config.ts y vitest.web.config.ts).
+ */
 export default defineConfig({
   test: {
-    // Cada archivo de test levanta su propia PGlite en memoria, así que
-    // los tests no comparten estado y pueden correr en paralelo.
-    include: ["packages/*/src/**/*.test.ts"],
-    testTimeout: 20_000,
+    projects: ["./vitest.backend.config.ts", "./vitest.web.config.ts"],
   },
 });

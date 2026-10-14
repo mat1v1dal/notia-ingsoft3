@@ -3,8 +3,9 @@ schema: spec-driven
 
 context: |
   Repositorio de la práctica de Ingeniería del Software 3 (UCC 2026).
-  Hasta el TP2 acá vive únicamente el flujo de trabajo: no hay stack todavía.
-  La app del semestre entra en el TP2 y este contexto se completa entonces.
+  La app del semestre es notia: monorepo pnpm con core (Drizzle + Postgres),
+  api (Hono), worker (OpenAI) y web (React + Vite). Los tests son vitest, con
+  PGlite en memoria para core y dobles de fetch para lo que sale a la red.
 
 rules:
   proposal:
@@ -19,10 +20,12 @@ rules:
   apply:
     - Seguir los patrones del código existente
     tdd: false
-    test_command: ""
+    test_command: "pnpm test"
   verify:
-    test_command: ""
-    build_command: ""
-    coverage_threshold: 0
+    test_command: "pnpm cov:backend && pnpm cov:frontend"
+    build_command: "pnpm typecheck"
+    # El umbral real vive en vitest.backend.config.ts (90 líneas / 80 ramas)
+    # y vitest.web.config.ts (95 / 90). Este es el mínimo de los dos.
+    coverage_threshold: 80
   archive:
     - Avisar antes de mergear deltas destructivos
