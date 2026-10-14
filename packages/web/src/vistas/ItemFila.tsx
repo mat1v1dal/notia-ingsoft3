@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Item } from "../api.js";
+import { etiquetaDeEnlace } from "../enlace.js";
 import { comoTexto, estaVencido } from "../fecha.js";
 
 export const TZ = "America/Argentina/Buenos_Aires";
@@ -66,7 +67,7 @@ export function ItemFila({
 
         {item.url ? (
           <a className="item-link" href={item.url} target="_blank" rel="noreferrer">
-            {new URL(item.url).hostname}
+            {etiquetaDeEnlace(item.url)}
           </a>
         ) : null}
 
