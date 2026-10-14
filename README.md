@@ -17,6 +17,7 @@ inmutables, infraestructura como código, seguridad y observabilidad.
 | TP2 | Contenedores: la app del semestre | ✅ `v2.0.0` |
 | TP3 | Planificación y trazabilidad | ✅ `v3.0.0` — [tablero](https://github.com/users/mat1v1dal/projects/1) |
 | TP4 | CI: Pipelines as Code | ✅ `v4.0.0` |
+| TP5 | Calidad: tests, cobertura y umbral | ✅ `v5.0.0` |
 
 ## La app del semestre: notia
 
