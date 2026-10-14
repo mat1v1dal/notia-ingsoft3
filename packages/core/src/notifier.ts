@@ -18,16 +18,26 @@ export type EvolutionOptions = {
   destinoJid: string;
 };
 
+/** Lo mínimo que el notifier necesita de `fetch`: así un test le pasa un doble. */
+export type Fetch = (url: string, init?: RequestInit) => Promise<Response>;
+
 /**
  * Envío por WhatsApp vía Evolution API.
  *
  * El destino es siempre el chat propio del usuario. Los grupos observados
  * se leen, no se escriben: son conversaciones de otra gente.
+ *
+ * `fetchImpl` entra por parámetro en vez de usarse el global: es la única
+ * dependencia externa de este módulo, y es lo que permite testear qué se
+ * manda y cómo se reacciona a un error sin una instancia de Evolution.
  */
-export function createEvolutionNotifier(opts: EvolutionOptions): Notifier {
+export function createEvolutionNotifier(
+  opts: EvolutionOptions,
+  fetchImpl: Fetch = (url, init) => fetch(url, init),
+): Notifier {
   return {
     async send(text: string): Promise<void> {
-      const res = await fetch(`${opts.baseUrl}/message/sendText/${opts.instance}`, {
+      const res = await fetchImpl(`${opts.baseUrl}/message/sendText/${opts.instance}`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

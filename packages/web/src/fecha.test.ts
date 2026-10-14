@@ -61,3 +61,20 @@ test("un item que vence a las 00:00 locales se muestra como fecha, no como hora"
   // 2026-08-11 00:00 en Buenos Aires = 03:00Z
   expect(comoTexto("2026-08-11T03:00:00Z", AHORA, TZ)).not.toBe("00:00");
 });
+
+// ── la regla de clasificación, en sus bordes ────────────────────────────────
+// AHORA es 2026-08-10 18:00Z; la ventana de "Esta semana" cierra exactamente
+// siete días después, a las 2026-08-17 18:00Z.
+
+test.each([
+  { dueAt: "2026-08-08T14:00:00Z", grupo: "Vencido", porQue: "hace dos días" },
+  { dueAt: "2026-08-10T17:59:00Z", grupo: "Vencido", porQue: "hoy, pero ya pasó" },
+  { dueAt: "2026-08-10T21:00:00Z", grupo: "Hoy", porQue: "hoy, más tarde" },
+  { dueAt: "2026-08-17T18:00:00Z", grupo: "Esta semana", porQue: "justo en el borde de los 7 días" },
+  { dueAt: "2026-08-17T18:00:01Z", grupo: "Después", porQue: "un segundo después del borde" },
+  { dueAt: null, grupo: "Sin fecha", porQue: "no tiene vencimiento" },
+])("$dueAt va a «$grupo» ($porQue)", ({ dueAt, grupo }) => {
+  const grupos = agrupar([item(1, dueAt)], AHORA, TZ);
+
+  expect(grupos.map((g) => g.titulo)).toEqual([grupo]);
+});
