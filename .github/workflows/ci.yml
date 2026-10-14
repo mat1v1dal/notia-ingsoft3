@@ -112,6 +112,19 @@ jobs:
   backend:
     name: Build imagen del backend
     runs-on: ubuntu-latest
+    # Desde el TP6 este job PUBLICA, y por eso ya no corre en paralelo con la
+    # verificación: espera al typecheck y a los tests de su lado. Si alguno
+    # falla, este job ni arranca, así que el paso que publica nunca corre
+    # sobre código que no pasó. Se paga en tiempo (los tests tardan ~50 s) y
+    # se compra la garantía de la cadena.
+    needs: [verificacion, tests-backend]
+    # Mínimo privilegio: el permiso de escribir paquetes va en el job que
+    # publica, no a nivel del workflow (ahí reemplazaría el default de TODOS
+    # los jobs). `contents: read` hace falta porque lo que no se lista queda
+    # sin permiso, y sin él el checkout no puede leer el código.
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -119,14 +132,28 @@ jobs:
       # Sin esto, cada corrida reconstruye todas las capas desde cero.
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build
+      # Sólo en la corrida de `main`. En un PR este paso sale salteado: es
+      # la evidencia de que pasó todo y aun así no publicó. Las dos
+      # condiciones, no una: si mañana otra rama entra al disparador, un
+      # push ahí no debe publicar nada.
+      - name: Entrar al registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Último paso: si se llegó acá es porque todo lo anterior pasó. En un
+      # PR construye y no sube (`push: false`); en `main` publica la imagen
+      # etiquetada con el commit que la produjo.
+      - name: Construir y publicar la imagen del backend
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.api
-          # No se publica desde el PR: acá sólo se verifica que compile.
-          # La publicación al registry es del TP2 y se hace a mano por ahora.
-          push: false
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ghcr.io/mat1v1dal/notia-api:sha-${{ github.sha }}
           # `load: false` evita exportar la imagen al daemon, que en CI no
           # sirve para nada y cuesta tiempo.
           load: false
@@ -135,22 +162,34 @@ jobs:
 
   frontend:
     name: Build imagen del frontend
-    # Sin `needs:`, así que corre EN PARALELO con backend. No comparten nada:
-    # cada job es una máquina virtual limpia, con su propio checkout y su
-    # propio filesystem. Lo único que comparten es el cache, y por eso cada
-    # uno usa su propio `scope`.
     runs-on: ubuntu-latest
+    # Corre en paralelo con el del backend: no comparten nada, cada job es
+    # una máquina limpia. Lo único que comparten es el cache, y por eso cada
+    # uno usa su propio `scope`.
+    needs: [verificacion, tests-frontend]
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Build
+      - name: Entrar al registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Construir y publicar la imagen del frontend
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.web
-          push: false
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ghcr.io/mat1v1dal/notia-web:sha-${{ github.sha }}
           load: false
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
