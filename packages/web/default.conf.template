@@ -1,5 +1,15 @@
+# Plantilla: la imagen oficial de nginx la procesa al arrancar y reemplaza
+# cada ${VARIABLE} por su valor de entorno, dejando el resultado en
+# /etc/nginx/conf.d/default.conf. Así la MISMA imagen sirve en compose, en QA
+# y en PROD: lo que cambia entre entornos llega por variables, no horneado.
+#
+#   PORT          puerto de escucha (80 en compose; Render impone el suyo)
+#   DNS_RESOLVER  quién resuelve el nombre del backend (el DNS de Docker en
+#                 compose, uno público en Render)
+#   BACKEND_URL   dónde está la API de ESTE entorno, sin barra final
+
 server {
-    listen 80;
+    listen ${PORT};
     server_name _;
 
     root /usr/share/nginx/html;
@@ -8,14 +18,12 @@ server {
     gzip on;
     gzip_types text/css application/javascript application/json image/svg+xml;
 
-    # DNS embebido de Docker. Hace falta declararlo para poder resolver el
-    # upstream en tiempo de ejecución (ver el comentario de abajo).
-    resolver 127.0.0.11 valid=10s ipv6=off;
+    # Hace falta declararlo para poder resolver el upstream en tiempo de
+    # ejecución (ver el comentario de abajo).
+    resolver ${DNS_RESOLVER} valid=10s ipv6=off;
 
     # La API vive en otro contenedor. nginx la proxea bajo el mismo origen
     # para que el navegador no vea dos hosts y no haya CORS ni preflight.
-    # `notia-api` es el nombre del servicio en compose: lo resuelve el DNS
-    # interno de la red, no hace falta ninguna IP.
     location ~ ^/(api|login|u|salud|webhook)/? {
         # El upstream va en una variable a propósito. Con el nombre literal,
         # nginx lo resuelve UNA VEZ al arrancar y aborta si no existe todavía
@@ -23,10 +31,11 @@ server {
         # una variable la resolución pasa a ser en cada request, así que el
         # orden de arranque deja de importar y un reinicio de la API no
         # obliga a reiniciar nginx.
-        set $upstream http://notia-api:3000;
+        set $upstream ${BACKEND_URL};
         proxy_pass $upstream$request_uri;
         proxy_http_version 1.1;
-        proxy_set_header Host $host;
+        # En Render la API es https: sin SNI el TLS no sabe a qué host va.
+        proxy_ssl_server_name on;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
