@@ -928,8 +928,12 @@ fix es una función nueva, `etiquetaDeEnlace`, con seis caminos adentro.
 
 3. Merge.
 
-**El freno vigente, en rojo: PR #TODO** — abierto desde `main` después del
-merge del #28, con otra función sin tests, y queda así hasta la defensa.
+**El freno vigente, en rojo: [PR #30](https://github.com/mat1v1dal/notia-ingsoft3/pull/30).**
+Abierto desde `main` después del merge del #28, con otra función sin tests
+(`normalizarConsulta`, en `busqueda.ts`), y queda así hasta la defensa.
+[Su corrida](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38518588089)
+frena por líneas, 94,02 % contra 95, y el estado de merge es `BLOCKED`:
+el check es obligatorio, así que el botón de merge está apagado.
 
 ### Por qué este freno es distinto del del TP4, y qué deja pasar igual
 
@@ -969,10 +973,11 @@ contado también en [`.github/workflows/README.md`](.github/workflows/README.md)
 se puso rojo, su estado de merge era `UNSTABLE`, no `BLOCKED`: los dos
 checks nuevos todavía no estaban en la lista de *required status checks* de
 `main`, que seguía exigiendo sólo los tres del TP4. El rojo era visible y
-no bloqueaba. Se resuelve agregando los dos nombres a la protección por API
-(como en el TP4), y **no se puede hacer antes** de que el PR #26 entre:
-un check *required* que ningún workflow reporta deja el PR esperando para
-siempre.
+no bloqueaba. Se resolvió agregando los dos nombres a la protección por API
+(como en el TP4), recién **después** de que el PR #26 entrara: un check
+*required* que ningún workflow reporta deja el PR esperando para siempre.
+La diferencia se ve en los dos PRs de demostración: el #28, rojo antes del
+cambio, decía `UNSTABLE`; el #30, rojo después, dice `BLOCKED`.
 
 **`projects` de vitest exige nombres únicos.** Las dos configs heredaban el
 `name` del `package.json` de la raíz y vitest se negaba a arrancar:
