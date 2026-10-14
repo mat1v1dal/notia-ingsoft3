@@ -2,16 +2,54 @@
 
 ## `ci.yml`
 
-Corre en **cada pull request** y en **cada push a `main`**. Cinco jobs sin
-dependencias entre sí, así que se despachan en paralelo:
+Corre en **cada pull request** y en **cada push a `main`**. Cinco jobs en dos
+niveles: los tres de verificación en paralelo, y los dos de build detrás de
+ellos.
 
-| Job | Verifica |
-|---|---|
-| `Typecheck` | `pnpm typecheck` sobre los cuatro paquetes |
-| `Tests y cobertura del backend` | `pnpm cov:backend`: la suite de core, api y worker, y que la cobertura llegue al umbral |
-| `Tests y cobertura del frontend` | `pnpm cov:frontend`: la suite de web, y que la cobertura llegue al umbral |
-| `Build imagen del backend` | que `Dockerfile.api` construye |
-| `Build imagen del frontend` | que `Dockerfile.web` construye |
+| Job | Hace | Espera a |
+|---|---|---|
+| `Typecheck` | `pnpm typecheck` sobre los cuatro paquetes | — |
+| `Tests y cobertura del backend` | `pnpm cov:backend`: la suite de core, api y worker, y que la cobertura llegue al umbral | — |
+| `Tests y cobertura del frontend` | `pnpm cov:frontend`: la suite de web, y que la cobertura llegue al umbral | — |
+| `Build imagen del backend` | construye `Dockerfile.api`; en `main`, además la **publica** en ghcr etiquetada con el commit | Typecheck + tests del backend |
+| `Build imagen del frontend` | construye `Dockerfile.web`; en `main`, además la **publica** | Typecheck + tests del frontend |
+
+### El artefacto: qué publica y cuándo
+
+Desde el TP6 el pipeline no sólo verifica: **entrega**. En cada push a
+`main`, los jobs de build suben las dos imágenes a `ghcr.io/mat1v1dal/notia-api`
+y `ghcr.io/mat1v1dal/notia-web` con la etiqueta `sha-<commit>`.
+
+La garantía de que en el registry sólo hay imágenes verificadas no es un
+control nuevo: sale de encadenar tres cosas.
+
+1. **Nada entra a `main` sin los cinco checks en verde** (TP4 + TP5).
+2. **Sólo `main` publica**: el `push:` del paso de build y el `if:` de
+   «Entrar al registry» exigen `push` **y** `refs/heads/main`. En un PR
+   construye igual, no sube nada, y el login sale salteado.
+3. **El paso que publica corre después de la verificación**: el job de
+   build tiene `needs:` sobre el typecheck y los tests de su lado. Si alguno
+   falla, el job ni arranca.
+
+Lo que la cadena **no** garantiza: un `docker push` a mano desde cualquier
+máquina entra igual. Garantiza lo que publica el pipeline, no lo que
+físicamente puede entrar.
+
+**Por qué el tercer eslabón va por `needs` y no por orden de pasos.** La guía
+de la cátedra pone los tests y el build en el mismo job, y la condición es el
+orden de los pasos. Acá los tests corren en su propio job desde el TP5, con
+su propio check obligatorio y su propio artefacto de cobertura. Hacer que el
+build espere al job de tests es la misma garantía, un nivel más arriba: un
+job con `needs` no arranca si lo que necesita falló.
+
+**El costo.** Los builds ya no corren en paralelo con la verificación. Es
+el minuto que tardan los tests, y lo que compra es que la imagen publicada
+nunca sea anterior a la verificación.
+
+**Permisos.** `packages: write` va en los dos jobs que publican, no a nivel
+del workflow: ahí reemplazaría el default de todos los jobs, y el de tests
+no necesita escribir nada. La credencial es el `GITHUB_TOKEN` de la corrida:
+vive lo que dura el job y no se guarda en ningún lado.
 
 ### Los jobs de tests
 
