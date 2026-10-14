@@ -41,6 +41,74 @@ jobs:
       # este job el pipeline no verificaría nada del backend.
       - run: pnpm typecheck
 
+  tests-backend:
+    name: Tests y cobertura del backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # La misma receta que en local: `pnpm cov:backend`. Vitest evalúa los
+      # thresholds de vitest.backend.config.ts y sale con error si no se
+      # cumplen, aunque todos los tests hayan pasado. Ese error es el que
+      # pone el check en rojo.
+      - name: Correr los tests con cobertura
+        run: pnpm cov:backend
+
+      # Se escribe aunque el paso anterior haya fallado: cuando el umbral
+      # frena es justo cuando hay que mirar el número.
+      - name: Resumen de cobertura en el run
+        if: ${{ !cancelled() }}
+        run: node .github/scripts/resumen-cobertura.mjs backend coverage/backend/coverage-summary.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar el reporte
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-backend
+          path: coverage/backend
+
+  tests-frontend:
+    name: Tests y cobertura del frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Correr los tests con cobertura
+        run: pnpm cov:frontend
+
+      - name: Resumen de cobertura en el run
+        if: ${{ !cancelled() }}
+        run: node .github/scripts/resumen-cobertura.mjs frontend coverage/frontend/coverage-summary.json >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar el reporte
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: cobertura-frontend
+          path: coverage/frontend
+
   backend:
     name: Build imagen del backend
     runs-on: ubuntu-latest
