@@ -87,3 +87,40 @@ test("un payload malformado se descarta en vez de romper", () => {
   expect(normalizeEvolutionMessage({ event: "messages.upsert", data: {} })).toBeNull();
   expect(normalizeEvolutionMessage("no soy un objeto")).toBeNull();
 });
+
+// ── de dónde sale el texto ──────────────────────────────────────────────────
+// Una regla, cinco formas de llegar: WhatsApp manda el texto en un campo
+// distinto según sea un mensaje plano, uno con link, o el caption de un adjunto.
+
+test.each([
+  { fuente: "conversation", message: { conversation: "el TP3 se corre al viernes" } },
+  { fuente: "extendedTextMessage", message: { extendedTextMessage: { text: "el TP3 se corre al viernes" } } },
+  { fuente: "caption de imageMessage", message: { imageMessage: { url: "…", caption: "el TP3 se corre al viernes" } } },
+  { fuente: "caption de videoMessage", message: { videoMessage: { url: "…", caption: "el TP3 se corre al viernes" } } },
+  { fuente: "caption de documentMessage", message: { documentMessage: { url: "…", caption: "el TP3 se corre al viernes" } } },
+])("el texto se lee de $fuente", ({ message }) => {
+  const msg = normalizeEvolutionMessage({ ...base, data: { ...base.data, message } });
+
+  expect(msg?.body).toBe("el TP3 se corre al viernes");
+});
+
+test("un caption vacío o de solo espacios no cuenta como texto", () => {
+  const msg = normalizeEvolutionMessage({
+    ...base,
+    data: { ...base.data, message: { imageMessage: { url: "…", caption: "   " } } },
+  });
+
+  expect(msg).toBeNull();
+});
+
+test("un timestamp inválido no produce una fecha inválida: se usa el momento de recepción", () => {
+  const antes = Date.now();
+
+  const msg = normalizeEvolutionMessage({
+    ...base,
+    data: { ...base.data, messageTimestamp: "no-es-un-numero" },
+  });
+
+  expect(msg?.sentAt.getTime()).not.toBeNaN();
+  expect(msg!.sentAt.getTime()).toBeGreaterThanOrEqual(antes);
+});
