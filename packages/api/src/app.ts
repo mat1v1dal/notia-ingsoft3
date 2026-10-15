@@ -11,7 +11,7 @@ import {
 import { chats, itemChanges, items } from "@notia/core/schema";
 import { undoToken, verifyUndoToken } from "@notia/core/undo";
 import { desc, eq, isNull, sql } from "drizzle-orm";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { normalizeEvolutionMessage } from "./evolution.js";
 
@@ -26,6 +26,10 @@ export type AppConfig = {
 };
 
 const COOKIE = "notia_sesion";
+
+function esHttps(c: Context): boolean {
+  return c.req.header("x-forwarded-proto") === "https" || new URL(c.req.url).protocol === "https:";
+}
 
 export function createApp(cfg: AppConfig) {
   const app = new Hono();
@@ -54,7 +58,10 @@ export function createApp(cfg: AppConfig) {
     setCookie(c, COOKIE, cfg.secret, {
       httpOnly: true,
       sameSite: "Lax",
-      secure: true,
+      // Secure sólo cuando la conexión es https. Un entorno servido por http
+      // (los del VPS, sin certificado) haría que el navegador descarte la
+      // cookie y no se pudiera entrar nunca. nginx manda X-Forwarded-Proto.
+      secure: esHttps(c),
       path: "/",
       maxAge: 60 * 60 * 24 * 365,
     });

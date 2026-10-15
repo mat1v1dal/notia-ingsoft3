@@ -98,6 +98,19 @@ test("la contraseña correcta deja una cookie de sesión httpOnly", async () => 
   expect(res.headers.get("set-cookie")).toMatch(/^notia_sesion=.*HttpOnly/);
 });
 
+test.each([
+  { via: "http directo", headers: {}, secure: false },
+  { via: "https detrás de nginx", headers: { "x-forwarded-proto": "https" }, secure: true },
+])("la cookie es Secure sólo si la conexión es https ($via)", async ({ headers, secure }) => {
+  const res = await app.request("/login", {
+    method: "POST",
+    headers: { ...JSON_, ...headers },
+    body: JSON.stringify({ password: CONFIG.password }),
+  });
+
+  expect(res.headers.get("set-cookie")?.includes("Secure")).toBe(secure);
+});
+
 test("sin cookie, la API no muestra nada", async () => {
   const res = await app.request("/api/items");
 
