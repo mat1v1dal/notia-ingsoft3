@@ -29,7 +29,7 @@ runs:
       run: |
         mkdir -p ~/.ssh && chmod 700 ~/.ssh
         printf '%s\n' "${{ inputs.clave-ssh }}" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
-        echo '201.32.128.192 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILmUHsnuB0KqSZ8vxzYFTGmAtNhen1KMGoBzZZAOZvMX' >> ~/.ssh/known_hosts
+        echo '[201.32.128.192]:5078 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILmUHsnuB0KqSZ8vxzYFTGmAtNhen1KMGoBzZZAOZvMX' >> ~/.ssh/known_hosts
 
     # Se despliega EL commit recibido, no "lo último": el tag de la imagen
     # es el sha. El compose viaja desde el repo en cada deploy; en el
@@ -41,8 +41,8 @@ runs:
         ENTORNO: ${{ inputs.entorno }}
         COMMIT: ${{ inputs.commit }}
       run: |
-        scp -i ~/.ssh/deploy deploy/compose.vps.yml "$VPS:/srv/notia/$ENTORNO/compose.yml"
-        ssh -i ~/.ssh/deploy "$VPS" "
+        scp -P 5078 -i ~/.ssh/deploy deploy/compose.vps.yml "$VPS:/srv/notia/$ENTORNO/compose.yml"
+        ssh -p 5078 -i ~/.ssh/deploy "$VPS" "
           cd /srv/notia/$ENTORNO &&
           sed -i 's/^NOTIA_TAG=.*/NOTIA_TAG=sha-$COMMIT/' .env &&
           docker compose pull -q &&
