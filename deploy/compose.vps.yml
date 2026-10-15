@@ -1,0 +1,74 @@
+# Un entorno de notia en el VPS: Postgres + API + web, desde las imágenes
+# publicadas por el pipeline. El mismo archivo sirve para QA y para PROD:
+# lo que cambia entre entornos llega por el .env de cada uno
+# (/srv/notia/<entorno>/.env en el servidor), nunca editado por el pipeline
+# salvo NOTIA_TAG, que es el commit que se despliega.
+#
+# El pipeline copia este archivo al servidor en cada deploy y corre
+# `docker compose pull && up -d`. No se edita a mano en el servidor: lo que
+# está acá es lo que corre, y se puede leer en el repo.
+#
+# Variables del .env:
+#   NOTIA_ENV          qa | prod  → el nombre del proyecto, que aísla red,
+#                      contenedores y volúmenes del otro entorno
+#   WEB_PORT           8081 (qa) | 8082 (prod): el único puerto publicado
+#   NOTIA_TAG          sha-<commit>: la imagen verificada que corre
+#   POSTGRES_PASSWORD, APP_PASSWORD, APP_SECRET, WEBHOOK_TOKEN
+
+name: notia-${NOTIA_ENV:?falta NOTIA_ENV en el .env}
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: notia
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?falta POSTGRES_PASSWORD en el .env}
+      POSTGRES_DB: notia
+    # VPS de 2 GB compartido con otro proyecto: Postgres chico a propósito.
+    command: postgres -c shared_buffers=64MB -c max_connections=30
+    volumes:
+      # Volumen por entorno (el nombre lleva el prefijo del proyecto):
+      # `down -v` de QA no puede tocar los datos de PROD.
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notia -d notia"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    mem_limit: 256m
+
+  notia-api:
+    image: ghcr.io/mat1v1dal/notia-api:${NOTIA_TAG:?falta NOTIA_TAG en el .env}
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgres://notia:${POSTGRES_PASSWORD}@postgres:5432/notia
+      APP_PASSWORD: ${APP_PASSWORD:?falta APP_PASSWORD en el .env}
+      APP_SECRET: ${APP_SECRET:?falta APP_SECRET en el .env}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?falta WEBHOOK_TOKEN en el .env}
+      PORT: 3000
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/salud || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    mem_limit: 384m
+
+  notia-web:
+    image: ghcr.io/mat1v1dal/notia-web:${NOTIA_TAG}
+    restart: unless-stopped
+    # El único puerto que sale a internet. Docker lo publica por fuera de
+    # ufw; lo que lo filtra es el firewall del panel del proveedor.
+    ports:
+      - "${WEB_PORT:?falta WEB_PORT en el .env}:80"
+    depends_on:
+      notia-api:
+        condition: service_healthy
+    mem_limit: 64m
+
+volumes:
+  pgdata:

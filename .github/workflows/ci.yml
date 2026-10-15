@@ -154,6 +154,8 @@ jobs:
           file: Dockerfile.api
           push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           tags: ghcr.io/mat1v1dal/notia-api:sha-${{ github.sha }}
+          # /salud informa este commit: es lo que el smoke test compara.
+          build-args: GIT_COMMIT=${{ github.sha }}
           # `load: false` evita exportar la imagen al daemon, que en CI no
           # sirve para nada y cuesta tiempo.
           load: false
@@ -193,3 +195,58 @@ jobs:
           load: false
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
+
+  deploy-qa:
+    name: Deploy a QA
+    runs-on: ubuntu-latest
+    # La promoción arranca donde termina la verificación: sin las dos
+    # imágenes publicadas no hay nada que desplegar.
+    needs: [backend, frontend]
+    # Los PRs verifican; sólo main despliega.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # El environment conecta el job con sus secrets (la clave SSH de QA) y
+    # con el historial de Deployments. QA no tiene reviewers: es automático
+    # a propósito.
+    environment:
+      name: qa
+      url: http://201.32.128.192:8081
+    # Dos merges seguidos no se pisan: el segundo espera al primero.
+    concurrency:
+      group: deploy-qa
+      cancel-in-progress: false
+    env:
+      VPS_HOST: 201.32.128.192
+      VPS_USER: notia-deploy
+      ENTORNO: qa
+      URL: http://201.32.128.192:8081
+    steps:
+      - uses: actions/checkout@v4
+
+      # La clave privada vive en el environment; la pública, en el usuario
+      # de deploy del servidor. El host key va fijo: el runner verifica que
+      # habla con NUESTRO servidor, no con cualquiera que conteste esa IP.
+      - name: Clave SSH del entorno
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          echo '[201.32.128.192]:5078 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILmUHsnuB0KqSZ8vxzYFTGmAtNhen1KMGoBzZZAOZvMX' >> ~/.ssh/known_hosts
+
+      # Se despliega EL commit verificado, no "lo último": el tag de la
+      # imagen es el sha de esta corrida. El compose viaja desde el repo en
+      # cada deploy; en el servidor sólo persiste el .env con los secretos.
+      - name: Desplegar el commit verificado
+        run: |
+          scp -P 5078 -i ~/.ssh/deploy deploy/compose.vps.yml "$VPS_USER@$VPS_HOST:/srv/notia/$ENTORNO/compose.yml"
+          ssh -p 5078 -i ~/.ssh/deploy "$VPS_USER@$VPS_HOST" "
+            cd /srv/notia/$ENTORNO &&
+            sed -i 's/^NOTIA_TAG=.*/NOTIA_TAG=sha-$GITHUB_SHA/' .env &&
+            docker compose pull -q &&
+            docker compose up -d --remove-orphans &&
+            docker compose ps --format '{{.Service}}\t{{.Image}}\t{{.Status}}'
+          "
+
+      # Falla el job si el entorno no contesta, o si contesta con OTRO
+      # commit: un deploy que "terminó" pero dejó la versión anterior
+      # corriendo no es un deploy.
+      - name: Smoke test
+        run: .github/scripts/smoke.sh "$URL" "$URL" "$GITHUB_SHA" 20 10
