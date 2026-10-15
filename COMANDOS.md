@@ -30,7 +30,7 @@ docker compose up -d
 La app queda en `http://localhost:8080` (o `WEB_PORT`). Comprobar el backend:
 
 ```bash
-curl http://localhost:8080/salud          # → {"ok":true}
+curl http://localhost:8080/salud          # → {"ok":true,"db":true,"commit":…}
 ```
 
 Generar los secretos del `.env`:

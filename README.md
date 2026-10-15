@@ -52,7 +52,7 @@ Son **dos** comandos y no uno, y eso es a propósito: el `.env` con los
 secretos no está versionado, así que la primera vez hay que crearlo.
 
 ```bash
-curl http://localhost:8080/salud   # → {"ok":true}
+curl http://localhost:8080/salud   # → {"ok":true,"db":true,"commit":…}
 ```
 
 ### Levantarlo sin compilar nada

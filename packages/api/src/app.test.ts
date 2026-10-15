@@ -178,3 +178,15 @@ test("deshacer una creación cierra el item en vez de borrarlo, y marca el cambi
   const [cambio] = await db.select().from(itemChanges);
   expect(cambio?.undoneAt).not.toBeNull();
 });
+
+// ── salud ───────────────────────────────────────────────────────────────────
+
+test("/salud confirma que la base responde y dice qué commit corre", async () => {
+  process.env.GIT_COMMIT = "abc123";
+
+  const res = await app.request("/salud");
+
+  expect(res.status).toBe(200);
+  expect(await res.json()).toEqual({ ok: true, db: true, commit: "abc123" });
+  delete process.env.GIT_COMMIT;
+});
