@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Item } from "../api.js";
+import { normalizarConsulta } from "../busqueda.js";
 import { ItemFila } from "./ItemFila.js";
 
 export function Buscar({ alFallar }: { alFallar: (e: unknown) => void }) {
@@ -7,8 +8,8 @@ export function Buscar({ alFallar }: { alFallar: (e: unknown) => void }) {
   const [resultados, setResultados] = useState<Item[] | null>(null);
 
   useEffect(() => {
-    const q = texto.trim();
-    if (q.length < 2) {
+    const q = normalizarConsulta(texto);
+    if (q === null) {
       setResultados(null);
       return;
     }
