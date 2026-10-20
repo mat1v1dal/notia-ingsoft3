@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { SinSesion } from "./api.js";
+import { versionCorta } from "./version.js";
 import { Buscar } from "./vistas/Buscar.js";
 import { Chats } from "./vistas/Chats.js";
 import { Entrar } from "./vistas/Entrar.js";
@@ -24,8 +25,21 @@ const SECCIONES = [
   { href: "#/log", etiqueta: "Log" },
 ];
 
+/** El commit que corre en este entorno, según /salud. */
+function useVersion(): string | null {
+  const [version, setVersion] = useState<string | null>(null);
+  useEffect(() => {
+    fetch("/salud")
+      .then((r) => r.json())
+      .then((salud) => setVersion(versionCorta(salud)))
+      .catch(() => setVersion(null));
+  }, []);
+  return version;
+}
+
 export function App() {
   const ruta = useRuta();
+  const version = useVersion();
   const [conSesion, setConSesion] = useState(true);
 
   // Cualquier vista puede descubrir que la sesión venció; la app entera
@@ -45,6 +59,11 @@ export function App() {
           <h1 className="marca">
             not<span>ia</span>
           </h1>
+          {version ? (
+            <span className="cuenta" title="El commit que corre en este entorno">
+              v{version}
+            </span>
+          ) : null}
         </header>
 
         {base === "/" || base.startsWith("/item") ? <Inbox alFallar={alFallar} /> : null}
