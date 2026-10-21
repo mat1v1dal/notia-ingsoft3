@@ -223,12 +223,75 @@ jobs:
           clave-ssh: ${{ secrets.VPS_SSH_KEY }}
           commit: ${{ github.sha }}
 
+  integracion:
+    name: Integración contra QA
+    runs-on: ubuntu-latest
+    # Después del deploy: prueba lo que QA está corriendo, no un build local.
+    needs: deploy-qa
+    env:
+      E2E_BASE_URL: http://201.32.128.192:8081
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # Sin navegador: la API de QA con su Postgres de verdad, por HTTP.
+      - name: Correr la suite de integración
+        run: pnpm --filter @notia/web integracion
+      - name: Publicar el reporte
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-integracion
+          path: packages/web/playwright-report
+
+  e2e:
+    name: E2E contra QA
+    runs-on: ubuntu-latest
+    # Si la API ya está rota, un browser no agrega diagnóstico: la e2e espera
+    # a la integración. Y PROD espera a las dos.
+    needs: integracion
+    env:
+      E2E_BASE_URL: http://201.32.128.192:8081
+      E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.28.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Instalar Chromium
+        run: pnpm --filter @notia/web exec playwright install --with-deps chromium
+      # Sin `continue-on-error` ni `|| true`: si falla, el job queda rojo y
+      # deploy-prod no arranca. Ése es el gate.
+      - name: Correr la suite e2e
+        run: pnpm --filter @notia/web e2e
+      - name: Publicar el reporte
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-e2e
+          path: |
+            packages/web/playwright-report
+            packages/web/test-results
+
   deploy-prod:
     name: Deploy a PROD
     runs-on: ubuntu-latest
-    # PROD sólo después de QA vivo. No repite el `if` de la rama: lo hereda
-    # por la cadena, porque deploy-qa no corre en un PR.
-    needs: deploy-qa
+    # PROD sólo después de que un browser real usó QA sin romperse. No repite
+    # el `if` de la rama: lo hereda por la cadena (deploy-qa → integracion →
+    # e2e), que en un PR no corre.
+    needs: e2e
     # Acá el workflow SE PAUSA: el environment tiene required reviewers, y
     # hasta que alguien apruebe, el job no arranca y los secrets de PROD no
     # los lee nadie.

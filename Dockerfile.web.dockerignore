@@ -28,3 +28,4 @@ evolution-data
 openspec
 docs
 *.md
+packages/web/e2e
