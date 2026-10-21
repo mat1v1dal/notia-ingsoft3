@@ -91,7 +91,7 @@ export function Inbox({ alFallar }: { alFallar: (e: unknown) => void }) {
             aria-label="Anotar algo"
           />
           <button className="boton" type="submit">
-            Agregar
+            Anotar
           </button>
         </div>
       </form>
