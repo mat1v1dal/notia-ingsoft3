@@ -1374,3 +1374,197 @@ Lo que **no** está verificado: el comportamiento con dos corridas esperando
 aprobación a la vez (el `concurrency` lo evita para deploys simultáneos, pero
 no ordena la cola de aprobaciones), y blue-green, que está diseñado y no
 implementado.
+
+---
+
+## TP7 — Contenedores en el pipeline: integración y e2e como gate
+
+Escrito *as-built*, con cada decisión al lado del enlace que la prueba.
+
+### Enlaces del TP7
+
+| Qué | Dónde |
+|---|---|
+| Paquete del backend, con sus etiquetas `sha-…` | https://github.com/users/mat1v1dal/packages/container/package/notia-api |
+| Paquete del frontend, con sus etiquetas `sha-…` | https://github.com/users/mat1v1dal/packages/container/package/notia-web |
+| El commit que rompió la app | https://github.com/mat1v1dal/notia-ingsoft3/pull/41 |
+| La corrida con **integración verde, e2e roja** y PROD sin arrancar | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39650049056 |
+| Su reporte de integración, en verde | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39650049056/artifacts/12369720125 |
+| Su reporte de e2e, en rojo, con captura y traza | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39650049056/artifacts/12370086025 |
+| El arreglo | https://github.com/mat1v1dal/notia-ingsoft3/pull/42 |
+| La corrida completa en verde, hasta PROD, con la aprobación | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39670758826 |
+| **QA** | http://201.32.128.192:8081 |
+| **PROD** | http://201.32.128.192:8082 |
+
+### Cerrar la cadena: el entorno ejecuta la imagen
+
+Esta tarea quedó hecha desde el TP6, y es la razón por la que elegí el VPS
+y no Render. Render reconstruye desde el repositorio; el VPS **baja la imagen
+del registry** por su etiqueta `sha-<commit>` y la ejecuta. No hay segundo
+build: lo que corre en QA y en PROD es, bit a bit, lo que el pipeline
+construyó y verificó.
+
+**Build once, deploy many**, con mi ejemplo. En el TP6 descubrí que el
+backend corre TypeScript con `tsx` y que la imagen instala sus dependencias
+en el build. Si cada entorno construyera la suya, un `pnpm install` del
+martes y otro del jueves podrían resolver distinto aunque el lockfile sea el
+mismo (la imagen base `node:24-alpine` cambia), y QA y PROD correrían cosas
+diferentes con «el mismo código». Con una imagen, la pregunta no existe.
+
+**Cómo se comprueba desde afuera.** Tres caminos que dicen lo mismo:
+
+- `/salud` de cada entorno informa el commit que corre, y la barra de la app
+  lo muestra.
+- El log del deploy de cada corrida muestra el `pull` de
+  `ghcr.io/mat1v1dal/notia-api:sha-<commit>` y el `docker compose ps` con esa
+  imagen.
+- *Deployments* dice qué commit está en cada entorno, y esa etiqueta existe
+  en los dos paquetes.
+
+En la defensa, en el servidor:
+
+```bash
+ssh notia-vps 'docker ps --format "{{.Names}}\t{{.Image}}" | grep notia'
+```
+
+Lo que el smoke **no** alcanza a probar: que la app funcione. Contesta, y con
+la versión correcta. Si el botón de anotar dejó de andar, el smoke sigue
+verde; lo prueba la corrida roja de arriba.
+
+### Las etiquetas
+
+- **`sha-<commit>` en el registry.** Inmutable en la práctica: una por
+  commit, la pone el pipeline y nadie más. Garantiza **qué** imagen es.
+- **`v7.0.0` en git.** Nombra el commit que estaba en PROD al cerrar el TP.
+  Garantiza **cuál** de todas las imágenes es la de la entrega.
+- **No publico `latest`.** Es una etiqueta que se mueve: hoy apunta a una
+  imagen y mañana a otra. Un entorno que despliega `latest` no sabe qué
+  corre, y un rollback a `latest` no vuelve a ningún lado.
+
+**Del tag a la imagen, en un paso:**
+
+```bash
+echo "sha-$(git rev-list -n1 v7.0.0)"   # la etiqueta en los dos paquetes
+```
+
+### Las dos suites, y por qué no son lo mismo
+
+Las dos corren contra QA desplegado, sin dobles: ni mocks de la API, ni una
+base en memoria, ni `page.route`. Viven en `packages/web/e2e/`.
+
+**Integración** (`api.spec.ts`, Playwright sin navegador): le habla a la API
+por HTTP, con su Postgres de verdad.
+
+1. Alta → la encuentra entre los abiertos → la cierra → ya no está.
+2. Alta con el texto vacío → `400`, y no se creó nada.
+3. La búsqueda encuentra un item **cerrado**. La elegí porque es la memoria
+   de la app: si se rompe, lo que pasó deja de poder encontrarse.
+
+**E2E** (`flujos.e2e.spec.ts`, Chromium real):
+
+1. Anotar algo → aparece → marcarlo hecho → desaparece, también al recargar.
+2. Contraseña equivocada → el usuario ve «Esa contraseña no es.» → no hay
+   sesión, y la API contesta `401`.
+3. Lo anotado **sigue ahí al recargar** y se encuentra buscando. Es el flujo
+   de todos los días: anotar y confiar en que está. Si mañana no anda, me
+   escribo a mí mismo.
+
+**notia no borra items**: cerrar es su borrado, reversible a propósito (TP2).
+La limpieza de cada prueba es cerrar lo que creó y comprobar que ya no está
+entre los abiertos. Cada prueba fabrica un texto con la hora y un sufijo al
+azar, así ninguna encuentra el dato de otra.
+
+**Qué no puse en cada suite.** En integración no hay nada de interfaz: eso
+es del navegador. En e2e no hay casos de borde de la API (el texto vacío, la
+búsqueda de cerrados): son más baratos y más precisos por HTTP. Y ninguna
+suite repite lo que ya cubren los 137 unit tests (la agrupación por fecha, el
+cliente con su doble, la autenticación del webhook). Es la pirámide: muchos
+unit, pocas de integración, menos e2e.
+
+**El par que da diagnóstico**, leído en la corrida roja:
+
+| Integración | E2E | Qué está roto |
+|---|---|---|
+| verde | verde | nada |
+| **verde** | **roja** | **el front**: la API y la base andan, lo que falla es lo que ve el usuario |
+| roja | roja | la API o la base |
+| roja | verde | una regla de la API que la interfaz no ejercita |
+
+En el #41 cambié el texto del botón «Anotar» por «Agregar». Compilaba, los
+137 unit tests pasaban (ninguno mira ese texto), la integración no lo podía
+ver (no usa navegador). La e2e no encontró el botón y frenó la promoción. El
+par dijo **front**, y era el front.
+
+Y la integración ya había encontrado algo antes, en su primera corrida
+contra QA: **la API aceptaba items con el texto vacío**. La interfaz no los
+manda, así que ningún test del front lo veía. Ahora es un `400`.
+
+**Por qué la integración es la amplia**, contra la API ya desplegada, y no
+la estrecha contra una API levantada en el job: prueba la API **con la base,
+la red y la configuración reales de QA**, que es lo que un usuario va a
+encontrar. Pierde precisión (si falla, puede ser la red) y velocidad, y
+comparte datos con todas las corridas. Por eso cada prueba crea y limpia lo
+suyo.
+
+### Cold start y flakiness
+
+El VPS no duerme, así que no hay cold start de proveedor. Lo que sí hay es un
+contenedor recién recreado que tarda segundos en estar sano: el smoke espera
+antes de que corran las suites, y los timeouts son generosos (60 s por
+prueba, 15 s por `expect`). Nunca se saltea una prueba porque el entorno no
+responde.
+
+Un **test flaky** es uno que pasa y falla con el mismo código: depende de un
+tiempo, de un orden, de un dato que dejó otro. En CI hay **un** reintento, y
+Playwright marca como *flaky* la prueba que pasó al segundo intento: se ve,
+no se esconde. Las pruebas corren en serie (un worker) porque comparten QA.
+
+### La cadena de jobs
+
+```
+… → Deploy a QA → Integración contra QA → E2E contra QA → Deploy a PROD
+                                                          (required reviewer)
+```
+
+`integracion` necesita `deploy-qa`, `e2e` necesita `integracion` y
+`deploy-prod` necesita `e2e`. Nada desarma el gate: ni `continue-on-error`,
+ni `|| true`, ni `if: always()` en ese tramo. Los reportes se publican aunque
+fallen (`!cancelled()` en el paso de upload, no en los jobs). PROD recibe la
+**misma** imagen que QA verificó: los dos deploys usan el `sha` de la
+corrida, y los dos smokes confirman el mismo commit.
+
+### La misma imagen del front en QA y PROD
+
+Viene del TP6: la plantilla de nginx lee `BACKEND_URL`, `DNS_RESOLVER` y
+`PORT` del entorno al arrancar. Adentro de la imagen quedan los estáticos y
+la plantilla. En el VPS cada entorno es un proyecto de Compose con su red, así
+que el nombre `notia-api` resuelve a la API de **ese** entorno con el mismo
+valor.
+
+### Problemas encontrados
+
+**Dependabot en conflicto.** Su PR de `hono` tocaba `pnpm-lock.yaml`, que el
+PR de Playwright también cambió. No lo resolví a mano: le pedí a Dependabot
+que regenere su rama sobre `main` (`@dependabot rebase`).
+
+**Las e2e tardan un minuto cuando fallan.** El click espera el botón hasta el
+timeout y reintenta una vez: la corrida roja tardó unos cuatro minutos más
+que la verde. Es el precio de no confundir lentitud con rotura.
+
+### Declaración de uso de IA
+
+Usé **Claude Code**. Fue asistida la escritura de las dos suites, la
+configuración de Playwright, los jobs del workflow, la validación del texto
+vacío en la API con su test, la rotura y el arreglo del botón, y esta
+sección. No fue asistida la elección de qué flujo es el de todos los días, ni
+la aprobación de PROD.
+
+**Qué verifica cada assert, y qué no.** Cada prueba afirma sobre el dato que
+ella misma creó (su texto único) o sobre el mensaje de error. No están
+cubiertos: editar un item, el deshacer por link, la vista de chats y la de
+log.
+
+**Cómo lo verifiqué.** Las dos suites corrieron a mano contra QA antes del
+PR (las e2e 3/3; la integración 2/3, porque QA todavía no tenía el fix del
+texto vacío). Después, en las corridas enlazadas arriba: verde, rojo por la
+rotura, y verde hasta PROD.
