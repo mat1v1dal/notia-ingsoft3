@@ -1026,3 +1026,351 @@ Lo que **no** puedo declarar como verificado: la tabla del Summary en la
 página del run la vi en local (es lo que imprime el script), pero la página
 de la corrida no se puede leer sin sesión desde fuera. Queda para abrirla a
 mano antes de la defensa.
+
+---
+
+## TP6 — CD: environments, aprobaciones y despliegue
+
+Escrito *as-built*, con cada decisión al lado del enlace que la prueba.
+
+### Enlaces de este TP
+
+| Qué | Dónde |
+|---|---|
+| Paquete del backend, público | https://github.com/users/mat1v1dal/packages/container/package/notia-api |
+| Paquete del frontend, público | https://github.com/users/mat1v1dal/packages/container/package/notia-web |
+| Cadena 1: corrida de un PR con todo en verde y «Entrar al registry» **salteado** | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38643492664/job/116124921426 |
+| Cadena 2: corrida de `main` donde «Construir y publicar» es el **último** paso | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38655686748/job/116199586127 |
+| **QA** | http://201.32.128.192:8081 |
+| **PROD** | http://201.32.128.192:8082 |
+| El rechazo, con su motivo | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39550421779 |
+| QA verde → esperando → aprobado → PROD verde | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39553490668 |
+| Qué commit está en cada entorno, y desde cuándo | https://github.com/mat1v1dal/notia-ingsoft3/deployments |
+
+Las dos imágenes se bajan sin credenciales:
+
+```bash
+docker logout ghcr.io
+docker pull --platform linux/amd64 ghcr.io/mat1v1dal/notia-api:sha-be53a80357ddbcb28bbacdc45abfeebd71d532bd
+docker pull --platform linux/amd64 ghcr.io/mat1v1dal/notia-web:sha-be53a80357ddbcb28bbacdc45abfeebd71d532bd
+```
+
+### Dónde despliego, y por qué no Render + Neon
+
+En un **VPS propio** (DonWeb, Ubuntu 24.04, 2 vCPU, 2 GB). El enunciado
+acepta «Render+Neon, tu nube, o el fallback local, con el mismo contrato».
+Elegí el VPS por una razón de fondo, no de comodidad: **Render reconstruye la
+app desde el repositorio**, así que lo que corre en QA no es la imagen que el
+pipeline verificó sino otra construcción del mismo commit. En el VPS el
+pipeline despliega **la imagen exacta** que publicó, por su tag
+`sha-<commit>`. «Se promueve lo mismo que se verificó» es literalmente cierto,
+no una aproximación.
+
+La garantía que con Render se pierde, para la pregunta de la defensa: entre
+el build de mi pipeline y el de Render pueden cambiar la imagen base
+(`node:24-alpine` se actualiza), el registry de npm o cualquier cosa que el
+Dockerfile baje de la red. Dos builds del mismo commit no son la misma
+imagen. Con el VPS ese riesgo no existe porque no hay segundo build.
+
+Cada entorno es un **proyecto de Compose aparte** (`notia-qa`, `notia-prod`)
+con su red, su Postgres y su volumen (`notia-qa_pgdata`,
+`notia-prod_pgdata`). El compose es uno solo,
+[`deploy/compose.vps.yml`](deploy/compose.vps.yml): lo que cambia entre
+entornos llega por el `.env` de cada carpeta del servidor. El pipeline copia
+el compose desde el repo en cada deploy, así que lo que corre es lo que se lee
+acá.
+
+### Por qué el artefacto se publica sólo con la verificación en verde
+
+Porque si se publicara igual, estar en el registry dejaría de significar
+«esto pasó la verificación» y pasaría a significar «alguien lo construyó
+alguna vez». Lo que se despliega sale del registry: si el registry miente, el
+deploy hereda la mentira.
+
+La garantía sale de encadenar tres cosas, ninguna nueva:
+
+1. **Nada entra a `main` sin los cinco checks en verde** (TP4 y TP5).
+2. **Sólo `main` publica.** El `push:` del build y el `if:` del login exigen
+   evento `push` **y** rama `main`. En un PR construye y no sube nada: es la
+   primera corrida de la tabla de arriba.
+3. **El build no arranca si la verificación falló.** Acá me aparté de la
+   guía: ella pone tests y build en el mismo job y la condición es el orden de
+   los pasos. Mis tests corren en su propio job desde el TP5, con su propio
+   check obligatorio, así que la misma garantía va un nivel más arriba: el job
+   de build tiene `needs:` sobre el typecheck y los tests. Si fallan, ni
+   arranca.
+
+Lo que **no** garantiza: un `docker push` a mano desde mi notebook entra
+igual. La cadena cubre lo que publica el pipeline, no lo que físicamente
+puede entrar. Lo que lo cerraría es desplegar por **digest** (el hash del
+contenido) en vez de por tag: un tag se puede volver a apuntar a otra imagen,
+un digest no.
+
+### Continuous Delivery, no Deployment
+
+Implementé **Continuous Delivery**: todo lo que entra a `main` queda listo
+para producción y llega solo a QA, pero a PROD sólo con una aprobación.
+**Continuous Deployment** sería sacar el gate humano y que cada merge verde
+llegue a PROD.
+
+No lo quiero hoy porque lo que me haría confiar en un deploy sin mirar no
+existe todavía: no hay tests end-to-end (TP7), no hay métricas ni alertas que
+digan si el deploy empeoró algo, y el rollback es manual. Con esas tres cosas,
+sí: en una app de un solo usuario el gate humano compra poco una vez que las
+máquinas pueden decidir solas.
+
+### La cadena de jobs y el alcance de cada secret
+
+```
+Typecheck ─┬─► Build backend ──┐
+Tests back ┘                   ├─► Deploy a QA ─► Deploy a PROD
+Typecheck ─┬─► Build frontend ─┘   environment:     environment:
+Tests front┘                       qa (sin reglas)  production (required reviewer)
+```
+
+- `Deploy a QA` tiene `needs` sobre los dos builds (sin imagen publicada no
+  hay qué desplegar) y `if:` de evento `push` a `main` (los PRs verifican,
+  sólo `main` despliega).
+- `Deploy a PROD` tiene `needs: deploy-qa` y **no repite el `if`**: lo hereda
+  por la cadena, porque en un PR `Deploy a QA` no corre.
+- Los dos usan la acción compuesta
+  [`desplegar-en-vps`](.github/actions/desplegar-en-vps/action.yml): QA y
+  PROD se despliegan con **el mismo código**. Lo único que cambia es el
+  environment que la llama, y con él la clave, la carpeta y el puerto.
+- Se despliega `github.sha`, el commit de **esa** corrida. Entre que una
+  corrida queda esperando aprobación y que alguien aprueba, `main` puede
+  moverse; el aprobador firma ese sha y es ese el que sube.
+- `concurrency` por entorno con `cancel-in-progress: false`: dos deploys al
+  mismo entorno no se pisan, el segundo espera.
+
+**Los secrets.** Hay un `VPS_SSH_KEY` **por environment**, y son claves
+distintas. Las dos entran al servidor como `notia-deploy`, un usuario sin
+root, en el grupo `docker`. La de PROD vive en el environment `production`:
+**sin aprobación no la lee nadie**, ni siquiera un job del mismo workflow. Si
+estuviera en el repo, cualquier job podría desplegar a PROD sin pasar por el
+gate, y la aprobación sería decorado.
+
+Los secretos de la app (contraseña de la base, de la app, firma de sesión,
+token del webhook) **no pasan por GitHub**: se generaron en el servidor, en el
+`.env` de cada entorno, con permisos `600`. El pipeline sólo toca una línea de
+ese archivo, `NOTIA_TAG`.
+
+El **host key** del servidor va fijo en la acción. El runner verifica que
+habla con mi servidor y no con cualquiera que conteste esa IP.
+
+### Qué mira el aprobador antes de aprobar
+
+1. **Que QA esté verde con el commit de esta corrida**: el smoke lo verifica,
+   pero abro http://201.32.128.192:8081 y miro la versión en la barra.
+2. **Qué trae el cambio**: el PR mergeado. Si toca el compose, el `.env` o
+   las migraciones, lo miro con tiempo; un cambio de esquema no se deshace con
+   un rollback.
+3. **Que no haya otra corrida esperando más vieja.** Aprobar una corrida vieja
+   después de una nueva hace retroceder PROD. La regla es mía: la vieja se
+   rechaza a mano.
+
+Lo que el aprobador **no** puede ver: si el cambio empeora algo que nadie
+prueba (rendimiento, un flujo que el smoke no toca), ni cómo se comporta con
+los datos reales de PROD, que son distintos de los de QA. Para eso faltan
+métricas y alertas, que es el TP9.
+
+**El rechazo.** En la [primera corrida](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39550421779)
+el merge sólo agregaba el job de PROD, sin nada para el usuario. Lo rechacé:
+*«este merge sólo agrega el job de PROD, todavía no trae ningún cambio para
+el usuario. Espero el indicador de versión (#35) para que el primer deploy a
+PROD sea algo que se pueda comprobar en la pantalla.»* El job quedó en
+*failure*: la máquina obedeció al humano.
+
+**La aprobación.** En la [siguiente](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39553490668)
+llegó el indicador de versión (#35). QA verde al primer intento, aprobé, y
+PROD quedó con el commit `be53a80`, que se ve en la barra de la app.
+
+### La misma imagen en los dos entornos
+
+El `nginx.conf` del TP2 tenía escrito `http://notia-api:3000`. Ahora es una
+plantilla, [`default.conf.template`](packages/web/default.conf.template), que
+la imagen de nginx procesa al arrancar.
+
+| Por variable de entorno | Adentro de la imagen |
+|---|---|
+| `BACKEND_URL`: dónde está la API | los estáticos de la SPA |
+| `DNS_RESOLVER`: quién resuelve ese nombre | la plantilla de nginx |
+| `PORT`: dónde escucha | el código de la API |
+| `DATABASE_URL` y los secretos de la API | `GIT_COMMIT`, el commit del que salió |
+
+Los defaults del Dockerfile son los de compose: `docker compose up` del TP2
+sigue andando sin tocar nada. En el VPS los dos entornos usan el mismo
+`BACKEND_URL` (el nombre del servicio), porque cada proyecto de Compose tiene
+su propia red y su propio `notia-api`. La plantilla sigue siendo la que
+permitiría, en otra nube, apuntar cada front a su API.
+
+### Qué prueba el smoke test, y qué no
+
+[`smoke.sh`](.github/scripts/smoke.sh) reintenta hasta 20 veces cada 10 s y
+falla el job si no se cumplen las tres:
+
+1. `/salud` contesta, y **toca la base** (`select 1`): un `/salud` que sólo
+   dice «el proceso vive» daba verde con la base rota.
+2. El front sirve la página.
+3. **El commit que informa `/salud` es el que se desplegó.** Sin esto, un
+   deploy que dejó corriendo la versión anterior daba verde. La guía lo marca
+   opcional para el TP6; lo hice obligatorio porque es lo único que contesta
+   desde afuera «¿qué versión corre?».
+
+Reintenta porque el contenedor tarda unos segundos en estar sano, no por cold
+start: el VPS no duerme. En las corridas reales pasó al primer intento.
+
+Lo que **no** prueba: que se pueda entrar con la contraseña, que las vistas
+funcionen, que una migración haya dejado los datos bien. Contesta, y contesta
+con la versión correcta; no dice si la versión correcta hace lo que debe. Eso
+es el TP7.
+
+### La letra chica de mi infraestructura
+
+No hay free tier: el contrato es el del VPS, y es más simple.
+
+- **Sin cold start ni sleep**: los contenedores corren siempre.
+- **2 GB de RAM compartidos** con otro proyecto que ya corría ahí. Por eso el
+  compose pone `mem_limit` a cada servicio y un Postgres chico
+  (`shared_buffers=64MB`). Con los dos entornos arriba quedan ~1,1 GB libres.
+- **Sin minutos de build**: el servidor no construye nada, baja imágenes.
+- **Vence el 29/10/2026.** Las URLs tienen que vivir hasta la defensa: está
+  renovado o se cae todo.
+- **Sin HTTPS.** Los puertos 80 y 443 los usa el Caddy del otro proyecto. Por
+  eso los entornos van por IP y puerto, y la cookie de sesión dejó de ser
+  `Secure` fija: ahora lo es sólo sobre https (con `Secure` sobre http el
+  navegador la descarta y no se puede entrar).
+
+### Cómo comprobé que cada entorno usa su propia base
+
+Inserté un item `SOY PROD — prueba de separación de bases` **sólo** en la
+base de PROD, directo con `psql`, y conté en las dos:
+
+```
+== qa    soy_prod=0  total=0   volumen notia-qa_pgdata
+== prod  soy_prod=1  total=1   volumen notia-prod_pgdata
+```
+
+En la defensa: entro con la contraseña de cada entorno y se ve en PROD y no
+en QA.
+
+### Deployment pattern para una producción real
+
+**Blue-green.** Hoy el deploy es *recreate*: Compose baja el contenedor viejo
+y levanta el nuevo, con unos segundos sin servicio. Con usuarios reales
+correría dos proyectos de Compose de PROD, *blue* y *green*, y el Caddy que
+ya está en el servidor apuntando a uno solo. El deploy levanta el inactivo, lo
+prueba con el smoke, y cambia el Caddy de un lado al otro. El rollback es
+volver a cambiarlo: inmediato, sin bajar ninguna imagen.
+
+Por qué ese y no **canary**: canary manda un porcentaje del tráfico a la
+versión nueva y decide mirando métricas. Hoy no tengo métricas ni tráfico
+suficiente para que un 5 % diga algo: es una app de un usuario. Lo que le
+falta para hacerlo en serio es observabilidad (tasa de errores y latencia por
+versión) y un balanceador que reparta por porcentaje.
+
+Por qué no **rolling**: necesita varias réplicas, y tengo una por entorno.
+
+Y **feature flags** para separar deploy de release: el indicador de versión
+podría haber entrado apagado y prenderse sin desplegar. En notia los usaría
+para el agente de WhatsApp: desplegar un cambio en cómo extrae fechas y
+prenderlo sólo para un chat antes que para todos.
+
+### El rollback, medido
+
+Como el deploy es por imagen, volver atrás es desplegar el commit anterior:
+la imagen ya está en el registry. [`deploy/rollback.sh`](deploy/rollback.sh)
+fija `NOTIA_TAG`, hace `pull` + `up -d`, y cronometra hasta que `/salud`
+**desde afuera** informa el commit pedido.
+
+Lo corrí de verdad sobre PROD, al commit del deploy anterior (`a04616c`) y de
+vuelta a `be53a80`:
+
+```
+corriendo antes: be53a80…   inicio: 03:34:52   fin: 03:35:02   rollback de prod: 10 s
+corriendo antes: a04616c…   inicio: 03:35:02   fin: 03:35:12   vuelta:           10 s
+```
+
+**10 segundos**, porque no hay build: es bajar una imagen que ya está y
+recrear dos contenedores. El paso a paso si un deploy aprobado sale mal:
+
+1. Leer en *Deployments* qué commit estaba antes en `production`.
+2. `deploy/rollback.sh prod <ese sha> <clave de PROD>`.
+3. Abrir PROD y mirar la versión en la barra.
+
+Dos cosas que hay que decir. **No pasa por el gate**: es un camino de
+emergencia con la clave de PROD, y por eso esa clave no la tiene nadie más que
+yo. La alternativa con gate es re-correr el job `Deploy a PROD` de la corrida
+anterior, que vuelve a pedir aprobación y sólo funciona hasta 30 días. Y
+**no deshace los datos**: si el deploy malo corrió una migración que borró o
+cambió una columna, volver la imagen no la restaura. Para eso harían falta
+migraciones reversibles o un backup previo al deploy.
+
+La métrica DORA que esto ejercita es el **tiempo de recuperación** (*time to
+restore service*).
+
+### Si el VPS desaparece mañana
+
+Sobrevive sin cambios casi todo: el CI, las imágenes en GHCR, los
+environments con su gate, el smoke, el compose. Lo único atado al VPS es la
+acción de deploy (host, puerto, host key) y los `.env` del servidor. En otra
+máquina con Docker son tres líneas y dos archivos. Es la ventaja de desplegar
+contenedores: el destino es intercambiable.
+
+### Problemas encontrados
+
+**El primer push al registry falló con `permission_denied: write_package`.**
+Los paquetes los había creado a mano en el TP2, con mi token, y no estaban
+vinculados al repositorio. El `GITHUB_TOKEN` de la corrida sólo escribe en
+paquetes que le dieron acceso al repo. Se resolvió en la configuración de cada
+paquete (*Manage Actions access → Write*) y se relanzaron los dos jobs. El
+pipeline tenía exactamente el permiso que declaró, y nada más.
+
+**El SSH.** El servidor escucha SSH en el 5078, con el 22 cerrado en el
+firewall del proveedor. Primero se abrió el 22 por error mío; el pipeline usa
+el 5078 con su host key fijo, y el 22 se vuelve a cerrar.
+
+**El primer smoke falló con el deploy hecho.** El job entró, bajó las
+imágenes y QA quedó corriendo, pero el smoke no llegaba: el 8081 estaba
+cerrado en el firewall del proveedor. Abierto el puerto, re-corrí el job
+fallido y pasó al primer intento. Es exactamente el caso que el smoke existe
+para atrapar: el deploy «terminó» y el entorno no respondía.
+
+**El primer rechazo quedó sin comentario.** Lo re-corrí (*Re-run failed
+jobs*), quedó esperando otra vez, y lo rechacé con el motivo escrito. En la
+corrida figuran los dos.
+
+**El tag en el lugar equivocado.** Creé `v6.0.0` sobre el commit en PROD
+antes de que entrara esta sección, y la corrección navega el tag. Lo borré a
+los minutos y lo creé de nuevo sobre el commit de esta documentación, después
+de que llegó a PROD.
+
+### Declaración de uso de IA
+
+Usé **Claude Code**. Fue asistido: los cambios del workflow (publicación,
+deploy a QA y a PROD, la acción compuesta), el compose del VPS, la plantilla
+de nginx, `/salud` con commit, el smoke test, el script de rollback, el
+indicador de versión, y la redacción de esta sección. También la
+configuración del servidor: el usuario `notia-deploy`, las claves por entorno
+y los `.env`.
+
+No fue asistida la decisión de usar el VPS en vez de Render, ni la de
+rechazar y aprobar: las corridas las revisé y decidí yo.
+
+**Cómo lo verifiqué.** Todo lo de esta sección se ejecutó:
+
+- La plantilla de nginx, en Docker: la misma imagen rinde
+  `listen 80 / notia-api:3000` sin variables y otra configuración con ellas.
+- El smoke, contra el stack local: pasa con el commit correcto, falla con
+  otro.
+- La cadena del registry, en las dos corridas de la tabla de arriba, y el
+  `docker pull` sin credenciales.
+- QA y PROD, desplegados por el pipeline y verificados desde afuera:
+  `/salud` responde con la base viva y el commit `be53a80` en los dos.
+- La separación de bases, con el dato en una sola.
+- El rollback, cronometrado ida y vuelta.
+
+Lo que **no** está verificado: el comportamiento con dos corridas esperando
+aprobación a la vez (el `concurrency` lo evita para deploys simultáneos, pero
+no ordena la cola de aprobaciones), y blue-green, que está diseñado y no
+implementado.

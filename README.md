@@ -18,6 +18,7 @@ inmutables, infraestructura como código, seguridad y observabilidad.
 | TP3 | Planificación y trazabilidad | ✅ `v3.0.0` — [tablero](https://github.com/users/mat1v1dal/projects/1) |
 | TP4 | CI: Pipelines as Code | ✅ `v4.0.0` |
 | TP5 | Calidad: tests, cobertura y umbral | ✅ `v5.0.0` |
+| TP6 | CD: entornos, aprobación y despliegue | ✅ `v6.0.0` — [QA](http://201.32.128.192:8081) · [PROD](http://201.32.128.192:8082) |
 
 ## La app del semestre: notia
 
