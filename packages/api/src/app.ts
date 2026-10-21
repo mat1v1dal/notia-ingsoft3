@@ -89,10 +89,15 @@ export function createApp(cfg: AppConfig) {
 
   app.post("/api/items", async (c) => {
     const body = await c.req.json();
+    const content = String(body.content ?? "").trim();
+    // Un item sin texto no es nada que hacer: se rechaza antes de tocar la
+    // base, y el log no registra una creación vacía.
+    if (content === "") return c.json({ error: "el texto no puede estar vacío" }, 400);
+
     const item = await createItem(
       db,
       {
-        content: String(body.content ?? "").trim(),
+        content,
         url: body.url ?? null,
         dueAt: body.due_at ? new Date(body.due_at) : null,
         context: body.context ?? null,
