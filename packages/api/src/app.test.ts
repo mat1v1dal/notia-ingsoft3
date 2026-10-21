@@ -203,3 +203,19 @@ test("/salud confirma que la base responde y dice qué commit corre", async () =
   expect(await res.json()).toEqual({ ok: true, db: true, commit: "abc123" });
   delete process.env.GIT_COMMIT;
 });
+
+test.each([
+  { caso: "vacío", body: { content: "" } },
+  { caso: "de sólo espacios", body: { content: "   " } },
+  { caso: "ausente", body: {} },
+])("un item con el texto $caso se rechaza con 400 y no se crea", async ({ body }) => {
+  const res = await app.request("/api/items", {
+    method: "POST",
+    headers: { ...JSON_, ...COOKIE },
+    body: JSON.stringify(body),
+  });
+
+  expect(res.status).toBe(400);
+  expect(await db.select().from(items)).toHaveLength(0);
+  expect(await db.select().from(itemChanges)).toHaveLength(0);
+});
