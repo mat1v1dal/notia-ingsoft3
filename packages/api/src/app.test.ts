@@ -219,3 +219,10 @@ test.each([
   expect(await db.select().from(items)).toHaveLength(0);
   expect(await db.select().from(itemChanges)).toHaveLength(0);
 });
+
+test("un error no atrapado responde 500 sin detalles internos", async () => {
+  const res = await app.request("/api/falla", { headers: COOKIE });
+
+  expect(res.status).toBe(500);
+  expect(await res.json()).toEqual({ error: "error interno" });
+});

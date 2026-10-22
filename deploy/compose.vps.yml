@@ -47,6 +47,9 @@ services:
       APP_SECRET: ${APP_SECRET:?falta APP_SECRET en el .env}
       WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?falta WEBHOOK_TOKEN en el .env}
       PORT: 3000
+      # Sentry: el DSN sólo está en el .env de PROD. Sin él, apagado.
+      SENTRY_DSN: ${SENTRY_DSN:-}
+      SENTRY_ENVIRONMENT: ${NOTIA_ENV}
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/salud || exit 1"]
       interval: 10s

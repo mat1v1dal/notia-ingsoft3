@@ -11,6 +11,7 @@ import {
 import { chats, itemChanges, items } from "@notia/core/schema";
 import { undoToken, verifyUndoToken } from "@notia/core/undo";
 import { desc, eq, isNull, sql } from "drizzle-orm";
+import * as Sentry from "@sentry/node";
 import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { normalizeEvolutionMessage } from "./evolution.js";
@@ -211,6 +212,19 @@ export function createApp(cfg: AppConfig) {
   // base a propósito: un /salud que sólo dice "el proceso vive" da verde con
   // la connection string rota. Y dice qué commit corre, que es lo único que
   // permite comprobar desde afuera que lo desplegado es lo verificado.
+  // TEMPORAL (TP9): un error a propósito para verlo llegar a Sentry. Detrás
+  // de la sesión, así no lo dispara cualquiera. Se saca al cerrar el TP.
+  app.get("/api/falla", () => {
+    throw new Error("Falla de prueba del TP9");
+  });
+
+  // Todo error no atrapado va a Sentry con su pedido, y el usuario recibe un
+  // 500 sin detalles internos.
+  app.onError((err, c) => {
+    Sentry.captureException(err);
+    return c.json({ error: "error interno" }, 500);
+  });
+
   app.get("/salud", async (c) => {
     const commit = process.env.RENDER_GIT_COMMIT ?? process.env.GIT_COMMIT ?? null;
     try {
