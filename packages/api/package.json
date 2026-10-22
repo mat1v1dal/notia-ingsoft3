@@ -12,7 +12,7 @@
     "@notia/core": "workspace:*",
     "@sentry/node": "^11.8.0",
     "drizzle-orm": "^0.44.7",
-    "hono": "^4.6.0",
+    "hono": "^4.13.11",
     "tsx": "^4.23.12"
   }
 }
