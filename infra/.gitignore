@@ -1,0 +1,7 @@
+# El estado guarda la contraseña de la base en texto plano: nunca al repo.
+*.tfstate
+*.tfstate.*
+.terraform/
+# Las variables locales pueden traer secretos o rutas de claves.
+*.tfvars
+crash.log
