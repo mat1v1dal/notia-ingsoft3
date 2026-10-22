@@ -130,7 +130,7 @@ jobs:
 
       # Buildx habilita el cache de capas contra el cache de GitHub Actions.
       # Sin esto, cada corrida reconstruye todas las capas desde cero.
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Sólo en la corrida de `main`. En un PR este paso sale salteado: es
       # la evidencia de que pasó todo y aun así no publicó. Las dos
@@ -175,7 +175,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Entrar al registry
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
