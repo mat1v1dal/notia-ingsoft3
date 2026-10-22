@@ -10,7 +10,7 @@ import "./styles.css";
  * el JavaScript que baja el navegador. `environment` dice de qué entorno vino
  * cada evento: QA, PROD o localhost se distinguen por el puerto.
  */
-const SENTRY_DSN = "";
+const SENTRY_DSN = "https://fe28802971c921c4be342f0ceccd5f7a@o4512296705982464.ingest.us.sentry.io/4512297008234496";
 
 if (SENTRY_DSN) {
   Sentry.init({
