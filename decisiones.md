@@ -711,67 +711,61 @@ las imágenes construyen — más de lo que había, menos de lo que va a haber.
 
 ## TP5 — Calidad automatizada: tests, cobertura y el umbral que frena un merge
 
-Escrito *as-built*, con cada decisión al lado del enlace que la prueba.
+Lo escribí después de hacerlo (*as-built*), con el enlace de cada cosa al
+lado.
 
-### Las herramientas, fila por fila
+### Las herramientas
 
-El stack no es el de la cátedra (.NET + vitest): acá los dos lados son
-TypeScript y los dos se testean con **vitest 3.2.7**.
+Mi stack no es el de la cátedra. Los dos lados son TypeScript y los dos se
+testean con vitest 3.2.7, así que la tabla de la guía me queda así:
 
-| Lo que se pide | Acá |
+| Lo que se pide | Cómo lo hice |
 |---|---|
-| Dónde viven los tests | al lado del código: `algo.test.ts` |
+| Dónde viven los tests | al lado del código, `algo.test.ts` |
 | Parametrizado | `test.each` |
-| Que la dependencia entre desde afuera | parámetro de la función (`fetchImpl`), con el real como default |
-| Fabricar el doble | `vi.fn()` |
+| Que la dependencia entre desde afuera | un parámetro (`fetchImpl`) con el `fetch` real como default |
+| El doble | `vi.fn()` |
 | Medir la cobertura | `@vitest/coverage-v8` |
 | Umbral que rompe el build | `coverage.thresholds` en la config de cada lado |
-| Qué entra en la cuenta | `coverage.include` / `coverage.exclude` |
-| Reporte legible | `text` en consola, `html` y `lcov` como artefacto, `json-summary` para el Summary |
+| Qué entra en la cuenta | `coverage.include` y `coverage.exclude` |
+| Reporte | `text` en consola, `html` y `lcov` como artefacto, `json-summary` para el Summary |
 
-### Qué elegí testear y por qué eso
+### Qué testeé y por qué
 
-La suite ya tenía 79 tests sobre las reglas de negocio de `core` (items,
-log de cambios, alcance del agente, scheduler, ingesta) contra una Postgres
-real en memoria. Lo que **no** tenía era nada en las fronteras: los dos
-módulos que salen a la red y la capa HTTP estaban en **0 %**.
+Ya tenía 79 tests sobre las reglas de `core` (items, el log de cambios, el
+alcance del agente, el scheduler, la ingesta), que corren contra un Postgres
+en memoria. Pero los dos módulos que salen a la red y la capa HTTP estaban
+en 0 %, y ahí es donde un bug me duele más:
 
-Elegí ir ahí porque es donde un bug duele más:
+- `app.ts`, la capa HTTP ([`app.test.ts`](packages/api/src/app.test.ts)).
+  Del otro lado están WhatsApp y el navegador, y un error en quién puede
+  entrar es un webhook abierto o una API sin contraseña. Lo pruebo con
+  `app.request` de Hono, sin levantar un servidor: la apikey del webhook, la
+  contraseña (tres variantes en un `test.each`), la cookie, un cuerpo que no
+  es JSON y el link de deshacer, que es el único camino sin cookie.
+- `notifier.ts` ([`notifier.test.ts`](packages/core/src/notifier.test.ts)),
+  el único módulo que escribe en WhatsApp. Lo que verifico es que el aviso
+  vaya a mi chat y nunca al grupo que estoy observando. Si eso se invierte,
+  la app le escribe a otra gente.
+- `api.ts`, el cliente del front ([`api.test.ts`](packages/web/src/api.test.ts)):
+  qué URL arma, que escape el `@` del jid en el path, y que un 401 se
+  convierta en `SinSesion`, que es lo que usa la app para volver al login.
+- `evolution.ts`. WhatsApp manda el texto en cinco campos distintos según
+  sea un mensaje común, uno con link o el caption de un adjunto. Es una
+  sola regla con cinco formas de llegar, así que va en un `test.each`.
+- `agrupar` en `fecha.ts`. La ventana de «Esta semana» cierra a los siete
+  días exactos, y puse un caso a cada lado del borde (`18:00:00Z` y
+  `18:00:01Z`). Si alguien cambia el `<=` por `<`, el primero falla.
 
-- **`app.ts`, la capa HTTP** ([`app.test.ts`](packages/api/src/app.test.ts)):
-  del otro lado están WhatsApp y el navegador. Un bug en «quién entra» es un
-  webhook abierto o una API sin contraseña. Se prueba con `app.request` de
-  Hono, sin socket: la apikey del webhook, la contraseña (tres variantes
-  en un `test.each`), la cookie, un cuerpo que no es JSON, y el link de
-  deshacer, que es el único camino **sin cookie** y por eso el más delicado.
-- **`notifier.ts`** ([`notifier.test.ts`](packages/core/src/notifier.test.ts)):
-  es el único módulo que *escribe* en WhatsApp. El assert que importa es
-  que el destino sea **el chat propio** y nunca el grupo observado: si eso
-  se invierte, el sistema le contesta a otra gente.
-- **`api.ts`, el cliente del front** ([`api.test.ts`](packages/web/src/api.test.ts)):
-  qué URL arma, cómo escapa un `@` en el path, y que un 401 se convierta en
-  `SinSesion`, que es lo que la app usa para caer al login en vez de dejar
-  pantallas a medias.
-- **Las fuentes del texto en `evolution.ts`**: WhatsApp manda el texto en
-  cinco campos distintos según sea un mensaje plano, uno con link o el
-  caption de un adjunto. Es *una* regla con cinco formas de llegar: un
-  `test.each`.
-- **Los bordes de `agrupar` en `fecha.ts`**: la ventana de «Esta semana»
-  cierra a los siete días exactos. Un caso a cada lado del borde
-  (`18:00:00Z` → Esta semana, `18:00:01Z` → Después): si alguien cambia el
-  `<=` por `<`, el primero se pone en rojo.
-
-De 79 tests a 116 ([PR #26](https://github.com/mat1v1dal/notia-ingsoft3/pull/26)),
+Con eso pasé de 79 tests a 116 ([PR #26](https://github.com/mat1v1dal/notia-ingsoft3/pull/26)),
 y después a 124 con los del PR de demostración.
 
 ### El refactor para poder mockear
 
-Ni el notifier ni el cliente de la API se podían testear: los dos llamaban
-al **`fetch` global**. No había por dónde meter un doble sin parchear el
-global, que es frágil y se filtra entre tests.
-
-El cambio fue el mismo de los dos lados: **la dependencia entra por
-parámetro**, con el `fetch` real como default.
+El notifier y el cliente de la API llamaban al `fetch` global, y no había
+forma de meter un doble sin pisar el global (que además se filtra de un test
+a otro). Hice lo mismo en los dos: el `fetch` entra por parámetro y el real
+queda como default.
 
 ```ts
 // antes                                      // después
@@ -780,99 +774,88 @@ export const api = { ... fetch(url) ... }     export function crearApi(fetchImpl
                                               export const api = crearApi((url, init) => fetch(url, init))
 ```
 
-Las vistas no cambian: siguen importando `api`. El default va envuelto en
-una flecha y no como `crearApi(fetch)` a secas porque en el navegador
-`fetch` llamado sin `window` como `this` tira *Illegal invocation*.
+Las vistas no se enteran, siguen importando `api`. El default va envuelto en
+una flecha porque `crearApi(fetch)` a secas anda en Node pero en el
+navegador tira *Illegal invocation*: `fetch` necesita que `this` sea
+`window`.
 
-**Mock y stub, en mis tests.** El doble de `fetch` del test del notifier es
-un **mock**: el assert es sobre *cómo lo llamaron* (`toHaveBeenCalledTimes`,
-la URL, el header `apikey`, el `number` del body). El doble del test de
-error es un **stub**: sólo devuelve un 500 y lo que se verifica es la
-reacción del código, no la llamada.
+En el mismo archivo tengo los dos tipos de doble. El del test que verifica
+el envío es un mock, porque lo que afirmo es cómo lo llamaron
+(`toHaveBeenCalledTimes`, la URL, el header `apikey`, el `number` del body).
+El del test de error es un stub: devuelve un 500 y lo que miro es qué hace
+mi código con eso.
 
-### El umbral: el número, la métrica y por qué
+### El umbral
 
-Medido con la suite de hoy, antes de elegir:
+Primero medí la suite como estaba:
 
-| | Líneas | Ramas | Umbral elegido |
+| | Líneas | Ramas | Umbral |
 |---|---|---|---|
-| Backend (`core` + `api` + `worker`) | 93,5 % (777/831) | **82,45 %** (188/228) | **90 líneas / 80 ramas** |
-| Frontend (`web`, lógica pura) | 98,19 % (109/111) | **93,61 %** (44/47) | **95 líneas / 90 ramas** |
+| Backend (`core`, `api`, `worker`) | 93,5 % (777/831) | 82,45 % (188/228) | 90 líneas, 80 ramas |
+| Frontend (la lógica de `web`) | 98,19 % (109/111) | 93,61 % (44/47) | 95 líneas, 90 ramas |
 
-Va sobre **las dos métricas**, por dos motivos. El primero es que miden
-cosas distintas: líneas dice *qué se ejecutó*, ramas dice *qué decisiones se
-tomaron en los dos sentidos*. Un `if` cuya condición siempre fue verdadera
-tiene el 100 % de sus líneas cubiertas y la mitad de sus ramas. El segundo
-es de vitest 3: una función que ningún test llama **no suma ramas**, sólo
-líneas sin cubrir. Con umbral únicamente de ramas, la demostración de abajo
-no se habría puesto roja.
+Puse umbral en las dos métricas. Líneas dice qué se ejecutó y ramas dice si
+cada decisión se tomó para los dos lados: un `if` que siempre dio verdadero
+tiene todas sus líneas cubiertas y la mitad de sus ramas. Y en vitest 3 una
+función que ningún test llama no suma ramas, sólo líneas sin cubrir, así que
+con umbral únicamente de ramas mi PR de demostración habría pasado.
 
-**Por qué esos números.** No están copiados: salen de la medición, con un
-margen que yo decido.
+Los números salen de la medición, con un margen:
 
-- Backend, líneas 90: 3,5 puntos por debajo de lo medido, unas 30 líneas
-  de margen. Suficiente para que un fix de cinco líneas no frene el merge
-  por sí solo, insuficiente para que entre un módulo nuevo sin tests.
-- Backend, ramas 80: casi al ras (2,45 puntos, 6 ramas). Es la métrica que
-  más cuesta subir y la que más dice; la dejo tirante a propósito.
-- Frontend, 95 / 90: la lógica es chica (111 líneas), así que cualquier
-  función nueva sin tests mueve el número varios puntos. El umbral alto es
-  lo que hace que una función de veinte líneas sin tests frene (abajo).
+- En el backend, 90 de líneas deja unas 30 líneas de margen. Un arreglo de
+  cinco líneas sin test no frena el merge, un módulo nuevo sin tests sí.
+- 80 de ramas queda casi al ras (6 ramas de margen), porque es la métrica
+  que más cuesta subir.
+- En el front la lógica tiene 111 líneas, así que cualquier función sin
+  tests mueve el número varios puntos. Por eso 95 y 90.
 
-**Qué pasaría si mañana lo subo diez puntos.** Backend a 100 de líneas es
-imposible sin tests sobre el `PATCH /api/items/:id`, el `PATCH` de chats y
-el deshacer de una *edición* (líneas 101-137 y 178-190 de `app.ts`), que
-son lo que hoy queda sin cubrir. Ramas a 90 pide cubrir las 10 ramas de
-`scheduler.ts` y las 10 de `agent.ts` que faltan, casi todas `??` y `?.`
-sobre nulos que la base no produce. Es trabajo, no magia, y el reporte dice
-exactamente cuál.
+Si mañana lo subiera diez puntos, el backend no llegaría. Lo que hoy queda
+sin cubrir es el `PATCH` de items y de chats y el deshacer de una edición
+(líneas 101 a 137 y 178 a 190 de `app.ts`), y para ramas faltan unas 10 en
+`scheduler.ts` y otras 10 en `agent.ts`, casi todas `??` y `?.` sobre nulos
+que la base nunca devuelve. Se puede, pero son tests que hay que escribir.
 
-### Qué dejé afuera de la cuenta, y por qué
+### Qué dejé afuera de la cuenta
 
-Todo está en los `exclude` de [`vitest.backend.config.ts`](vitest.backend.config.ts)
-y [`vitest.web.config.ts`](vitest.web.config.ts), comentado ahí mismo.
+Está en los `exclude` de [`vitest.backend.config.ts`](vitest.backend.config.ts)
+y [`vitest.web.config.ts`](vitest.web.config.ts), con un comentario en cada
+línea.
 
 | Afuera | Por qué |
 |---|---|
-| `api/src/index.ts`, `worker/src/index.ts` | El arranque: leen variables de entorno y encienden el servidor o el loop. Se verifican levantando el stack (TP2), no con unit tests. |
-| `core/src/schema.ts`, `db.ts`, `index.ts` | Definición de datos, tipos y re-exports. No hay lógica que pueda fallar. |
-| `core/src/testing.ts` | Es infraestructura **de** los tests (la Postgres en memoria). Contarla sería medirse a uno mismo. |
-| `core/src/connect.ts` | La conexión real a Postgres y el `migrate` al arrancar. Se prueba con `docker compose up`. |
-| `worker/src/openai-client.ts` | Adaptador fino al SDK de OpenAI: traduce argumentos. Lo que tiene lógica —el mapeo de la respuesta— está en `openai-mapping.ts` y **sí** se mide. |
-| `web/src/**/*.tsx` | Componentes React. Los unit tests del front son sin DOM, y la interfaz se verifica end-to-end contra la app desplegada en el TP7. |
-| `migrations/` | Generado por drizzle-kit. |
+| `api/src/index.ts`, `worker/src/index.ts` | El arranque: leen variables de entorno y prenden el servidor o el loop. Eso se prueba levantando el stack. |
+| `core/src/schema.ts`, `db.ts`, `index.ts` | Tablas, tipos y re-exports, sin lógica. |
+| `core/src/testing.ts` | Es la base en memoria que usan los tests. Contarla sería medirme a mí mismo. |
+| `core/src/connect.ts` | La conexión real a Postgres y las migraciones al arrancar. Se prueba con `docker compose up`. |
+| `worker/src/openai-client.ts` | Pasa argumentos al SDK de OpenAI. El mapeo de la respuesta, que es lo que tiene lógica, está en `openai-mapping.ts` y ese sí cuenta. |
+| `web/src/**/*.tsx` | Los componentes. Los unit tests del front son sin DOM, y la interfaz la prueba la e2e del TP7. |
+| `migrations/` | Lo genera drizzle-kit. |
 
-Lo que **no** dejé afuera y podría haber tentado: `app.ts`. Es la capa
-HTTP, y sacarla habría subido el número del backend a 96 %. Pero es donde
-está la autenticación; excluirla sería mentirse.
+`app.ts` lo dejé adentro aunque sacarlo subía el backend a 96 %. Ahí está la
+autenticación, y excluirla para mejorar el número habría sido hacer trampa.
 
-### El ejercicio del camino sin cubrir
+### El camino sin cubrir
 
-Abrí el reporte del frontend
-([`coverage/frontend/index.html`, artefacto `cobertura-frontend`](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514715113))
-y elegí la rama de código marcada en `fecha.ts`, línea 94:
+En el reporte del front ([artefacto `cobertura-frontend`](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514715113))
+la rama marcada estaba en `fecha.ts`, línea 94:
 
 ```ts
 const porFecha = (a: T, b: T) =>
   new Date(a.dueAt ?? 0).getTime() - new Date(b.dueAt ?? 0).getTime();
 ```
 
-1. **Qué línea es.** El `?? 0`: la rama que se recorre cuando `dueAt` es
-   `null`.
-2. **Qué entrada la recorrería.** Ninguna. `porFecha` sólo ordena los
-   cubos que no son «Sin fecha», y un item con `dueAt: null` va siempre a
-   ese cubo, que no se ordena. Para llegar a ese `?? 0` habría que meter
-   un item sin fecha en el cubo «Hoy», y el `if (!item.dueAt)` de arriba
-   lo impide.
-3. **Qué decidí.** No agregué el test, porque no existe la entrada. El
-   `?? 0` está porque el tipo dice `string | null` y el compilador exige
-   tratarlo; la alternativa es un `!` que le promete al compilador algo
-   que el código ya garantiza. Lo dejo: prefiero un `?? 0` inerte a un
-   `!` que, si alguien reordena el `if`, pasa a ser una excepción.
+1. La rama es el `?? 0`, la que se toma cuando `dueAt` es `null`.
+2. No hay entrada que la recorra. `porFecha` sólo ordena los grupos con
+   fecha, y un item con `dueAt: null` siempre cae en «Sin fecha», que no se
+   ordena. El `if (!item.dueAt)` de más arriba lo manda ahí antes.
+3. No agregué test porque no existe el caso. El `?? 0` está porque el tipo
+   es `string | null` y el compilador obliga a tratarlo. La otra opción era
+   un `!`, y prefiero el `?? 0`: si alguien un día reordena el `if`, el `!`
+   se convierte en una excepción y el `?? 0` no.
 
-### Por qué cobertura alta no garantiza calidad: mi ejemplo
+### Cobertura alta no es lo mismo que calidad
 
-Este test suma cobertura y no verifica nada:
+Este test sube la cobertura y no verifica nada:
 
 ```ts
 test("notifier", async () => {
@@ -880,31 +863,28 @@ test("notifier", async () => {
 });
 ```
 
-Ejecuta el 100 % de las líneas del camino feliz de `notifier.ts`. Si mañana
-alguien cambia `number: opts.destinoJid` por `number: opts.instance` —y el
-aviso empieza a salir a cualquier lado—, sigue verde. El test real
-([`notifier.test.ts`](packages/core/src/notifier.test.ts)) tiene el assert
-sobre el body de la llamada, y es *eso* lo que se pondría en rojo.
+Recorre todo el camino feliz de `notifier.ts`. Si alguien cambia
+`number: opts.destinoJid` por `number: opts.instance` y los avisos empiezan
+a salir a cualquier lado, sigue en verde. El test que de verdad tengo
+([`notifier.test.ts`](packages/core/src/notifier.test.ts)) afirma sobre el
+body de la llamada, y ése sí se pondría en rojo.
 
-Cobertura mide *qué se ejecutó*, no *qué se comprobó*. Un 80 % de
-cobertura quiere decir que el 80 % de las líneas corrieron bajo algún test;
-cuántas de ésas tienen un assert que las vigile, no lo dice. La manera de
-comprobarlo es invertir una regla y ver si algo se pone en rojo —el criterio
-del enunciado—, o automatizarlo con *mutation testing*.
+Un 80 % de cobertura quiere decir que el 80 % de las líneas corrieron bajo
+algún test, pero no cuántas tienen un assert que las controle. Para saberlo
+hay que invertir una regla y ver si algo falla, que es el criterio del
+enunciado, o usar mutation testing.
 
-### El Pull Request bloqueado, y el que queda abierto
+### El PR bloqueado y el que queda abierto
 
-**La secuencia completa: [PR #28](https://github.com/mat1v1dal/notia-ingsoft3/pull/28).**
+La secuencia completa está en el [PR #28](https://github.com/mat1v1dal/notia-ingsoft3/pull/28).
+`ItemFila` hacía `new URL(item.url)` al dibujar cada fila. El agente copia
+la URL de un mensaje de WhatsApp, y si lo que llegaba no era una URL válida
+la excepción vaciaba la lista entera. El arreglo fue una función nueva,
+`etiquetaDeEnlace`, con seis caminos.
 
-`ItemFila` llamaba a `new URL(item.url)` en el render. El agente copia la
-URL de un mensaje de WhatsApp, y si lo que llega no es una URL válida, la
-excepción subía por React y vaciaba la lista entera. Es un bug real, y el
-fix es una función nueva, `etiquetaDeEnlace`, con seis caminos adentro.
-
-1. **Primer push: la función, sin tests.** Compila, y los 116 tests pasan.
-   El check **`Tests y cobertura del frontend`** se pone en rojo igual.
-   [Corrida roja](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514922263),
-   y el log lo dice con todas las letras:
+1. La subí sin tests. Compilaba y pasaban los 116 tests, y el check
+   `Tests y cobertura del frontend` quedó en rojo igual
+   ([corrida](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514922263)):
 
    ```
    Tests  22 passed (22)
@@ -913,125 +893,101 @@ fix es una función nueva, `etiquetaDeEnlace`, con seis caminos adentro.
    ERROR: Coverage for lines (85.15%) does not meet global threshold (95%)
    ```
 
-   Frenó por **líneas**: 85,15 contra 95. Las ramas **no se movieron**
-   (93,75 %): es el comportamiento de vitest 3 que anticipa la guía, una
-   función que nadie llama no suma ramas. Con umbral sólo de ramas, este
-   PR habría pasado.
+   Frenó por líneas, 85,15 contra 95. Las ramas quedaron en 93,75 %, que es
+   lo de vitest 3: la función que nadie llama no suma ramas.
 
-2. **Los tests que faltaban**
-   ([`enlace.test.ts`](packages/web/src/enlace.test.ts)): uno por camino
-   que la función declara —sin link, vacío, válido, con `www.`, roto, y el
-   recorte en su borde exacto—. Ocho tests, porque tres entradas del
-   primer caso van en un `test.each`.
-   [Corrida verde](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38515101084):
-   98,43 % de líneas, 94,91 % de ramas.
+2. Agregué un test por camino en [`enlace.test.ts`](packages/web/src/enlace.test.ts)
+   (sin link, vacío, válido, con `www.`, roto, y el recorte justo en el
+   borde). Son ocho porque el primer caso tiene tres entradas en un
+   `test.each`. La [corrida](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38515101084)
+   dio 98,43 % de líneas y 94,91 % de ramas.
 
 3. Merge.
 
-**El freno vigente, en rojo: [PR #30](https://github.com/mat1v1dal/notia-ingsoft3/pull/30).**
-Abierto desde `main` después del merge del #28, con otra función sin tests
-(`normalizarConsulta`, en `busqueda.ts`), y queda así hasta la defensa.
-[Su corrida](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38518588089)
-frena por líneas, 94,02 % contra 95, y el estado de merge es `BLOCKED`:
-el check es obligatorio, así que el botón de merge está apagado.
+El que queda abierto y en rojo hasta la defensa es el [PR #30](https://github.com/mat1v1dal/notia-ingsoft3/pull/30).
+Lo abrí desde `main` después del merge del #28, con otra función sin tests
+(`normalizarConsulta`, en `busqueda.ts`). [Su corrida](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38518588089)
+frena por líneas, 94,02 contra 95, y el PR está `BLOCKED`.
 
-### Por qué este freno es distinto del del TP4, y qué deja pasar igual
+### En qué se diferencia del freno del TP4
 
-El gate del TP4 frena cuando **la máquina dice que algo no anda**: no tipa,
-la imagen no construye. El de esta semana frena por **un criterio que
-escribí yo**: el código del PR #28 compilaba y pasaba todos los tests, y
-quedó bloqueado por un número que elegí dos secciones más arriba. Es la
-primera vez en el semestre que lo que frena no es un error sino una
-política.
+El gate del TP4 frenaba cuando algo no andaba: no tipaba o la imagen no
+construía. El del #28 compilaba y pasaba todos los tests, y lo frenó un
+número que puse yo. Es la primera vez que lo que bloquea es un criterio y
+no un error.
 
-Lo que ninguno de los tres guardianes de `main` detecta: que el código haga
-**lo que se pidió**. Un test verifica lo que el autor creyó que había que
-verificar; la cobertura, que ese test pasó por ahí; el typecheck, que los
-tipos cierran. Si `etiquetaDeEnlace` tuviera que mostrar el path y no el
-dominio, los tres estarían verdes. Eso lo ve una revisión de código —y
-hoy una parte la puede hacer un agente de IA: leer el PR contra el issue,
-señalar un assert que no verifica nada, un caso de borde que falta. Lo que
-queda afuera aunque lo use: **decidir si el comportamiento es el correcto**
-para el usuario, porque eso no está escrito en ningún lado del repo.
+Ninguno de los tres controles de `main` puede ver si el código hace lo que
+se pidió. El test verifica lo que pensé que había que verificar, la
+cobertura dice que el test pasó por ahí y el typecheck que los tipos
+cierran. Si `etiquetaDeEnlace` tuviera que mostrar la ruta en vez del
+dominio, los tres darían verde. Eso lo detecta una revisión. Parte de esa
+revisión la puede hacer hoy un agente de IA (leer el PR contra el issue,
+marcar un assert que no controla nada o un borde que falta). Lo que no
+puede hacer es decidir si el comportamiento es el que quiere el usuario,
+porque eso no está escrito en el repo.
 
 ### Por qué los tests no corren adentro del Dockerfile
 
-La guía pone la suite en una etapa intermedia de la imagen, y el pipeline
-la construye con `target` y la corre con `docker run`. Lo evalué y lo
-descarté: el backend no compila (corre TypeScript con `tsx`) y el toolchain
-de tests vive en las `devDependencies` de la raíz del monorepo, no en
-ninguna imagen. Meterlo habría sido agregar una etapa, un `target`, un
-`docker run` y un volumen montado para terminar ejecutando el mismo
-`pnpm cov:backend`. El principio que la guía defiende —**una sola receta,
-la misma en local y en CI**— se cumple igual: la receta está en
-`package.json`, y el pipeline la invoca sin saber qué hay adentro. Está
-contado también en [`.github/workflows/README.md`](.github/workflows/README.md).
+La guía mete la suite en una etapa intermedia de la imagen y la corre con
+`docker run`. En mi caso no tenía sentido: el backend no compila (corre
+TypeScript con `tsx`) y las herramientas de test están en las
+`devDependencies` de la raíz del monorepo. Hubiera agregado una etapa, un
+`target`, un `docker run` y un volumen para terminar corriendo el mismo
+`pnpm cov:backend`. Lo que la guía busca, que haya una sola receta para local
+y CI, se cumple igual: la receta está en `package.json` y el pipeline la
+llama. Está explicado también en [`.github/workflows/README.md`](.github/workflows/README.md).
 
-### Problemas encontrados
+### Problemas
 
-**Un check en rojo que no es *required* no frena nada.** Cuando el PR #28
-se puso rojo, su estado de merge era `UNSTABLE`, no `BLOCKED`: los dos
-checks nuevos todavía no estaban en la lista de *required status checks* de
-`main`, que seguía exigiendo sólo los tres del TP4. El rojo era visible y
-no bloqueaba. Se resolvió agregando los dos nombres a la protección por API
-(como en el TP4), recién **después** de que el PR #26 entrara: un check
-*required* que ningún workflow reporta deja el PR esperando para siempre.
-La diferencia se ve en los dos PRs de demostración: el #28, rojo antes del
-cambio, decía `UNSTABLE`; el #30, rojo después, dice `BLOCKED`.
+Cuando el #28 se puso en rojo, el PR figuraba `UNSTABLE` y no `BLOCKED`. Los
+dos checks nuevos todavía no estaban en los *required status checks* de
+`main`, así que el rojo se veía pero no frenaba. Los agregué por API como en
+el TP4, pero recién después de mergear el #26: si un check es obligatorio y
+ningún workflow lo reporta, el PR se queda esperando para siempre. La
+diferencia se ve comparando los dos PRs de demostración: el #28, rojo antes
+del cambio, decía `UNSTABLE`, y el #30, rojo después, dice `BLOCKED`.
 
-**`projects` de vitest exige nombres únicos.** Las dos configs heredaban el
-`name` del `package.json` de la raíz y vitest se negaba a arrancar:
-*Project name "notia" is not unique*. Un `name` por config.
+Las dos configs de vitest heredaban el nombre del `package.json` raíz y
+vitest no arrancaba (*Project name "notia" is not unique*). Le puse un
+`name` a cada una.
 
-**`fetch` suelto en el navegador.** `crearApi(fetch)` funciona en Node y
-tira *Illegal invocation* en Chrome, porque `fetch` necesita `window` como
-`this`. De ahí la flecha en el default.
+`crearApi(fetch)` andaba en los tests y fallaba en Chrome con *Illegal
+invocation*. De ahí la flecha del default.
 
-**`res.json()` es `unknown` en Hono.** Los tests de `app.ts` necesitan un
-cast por respuesta para que el typecheck cierre. Es correcto que sea
-`unknown`: la respuesta es texto hasta que alguien la valida.
+`res.json()` devuelve `unknown` en los tests de Hono, así que cada respuesta
+lleva un cast. Lo dejé así porque es correcto: hasta que alguien la valida,
+la respuesta no tiene tipo.
 
-### Declaración de uso de IA
+### Uso de IA
 
-Usé **Claude Code** como asistente. Fue asistida la escritura de los tests
-nuevos (`notifier.test.ts`, `api.test.ts`, `app.test.ts`, `enlace.test.ts`,
-los `test.each` de `evolution.test.ts` y `fecha.test.ts`), los dos refactors
-para inyectar `fetch`, las dos configs de vitest, los jobs nuevos de
-`ci.yml`, el script del Summary, `etiquetaDeEnlace`, y la redacción de esta
-sección.
+Trabajé con Claude Code. Escribió los tests nuevos (`notifier.test.ts`,
+`api.test.ts`, `app.test.ts`, `enlace.test.ts` y los `test.each` de
+`evolution.test.ts` y `fecha.test.ts`), los dos refactors para inyectar
+`fetch`, las configs de vitest, los jobs de `ci.yml`, el script del Summary,
+`etiquetaDeEnlace` y la primera versión de esta sección. También propuso
+qué módulos testear y los umbrales, a partir de la medición. Yo hice los
+merges y agregué los checks obligatorios en `main`.
 
-No fue asistida la elección de **qué** testear (las fronteras, por el
-razonamiento de arriba) ni los números del umbral, que salen de la medición.
+Lo que queda sin cubrir lo dice el reporte: en `app.ts`, el `PATCH` de items
+y de chats y el deshacer de una edición; en `api.ts`, `crear` y `editar`; en
+`core`, ramas sobre nulos en `scheduler.ts` y `agent.ts`.
 
-**Qué verifica cada assert, y qué no está cubierto.** Lo escribí test por
-test al lado de cada uno, y en la sección de qué elegí testear. Lo que queda
-sin cubrir lo dice el reporte: en `app.ts`, el `PATCH` de items y de chats y
-el deshacer de una edición; en `api.ts`, `crear` y `editar`; en `core`, las
-ramas de nulos de `scheduler.ts` y `agent.ts`.
+Lo verificamos corriéndolo:
 
-**Cómo lo verifiqué.** Todo lo de esta sección se ejecutó:
-
-- La suite y el typecheck, en local, en cada paso: 116 y después 124 tests
-  en verde, typecheck limpio.
-- La cobertura, en local y en CI, con los números de arriba; en CI,
-  [la corrida del PR #27](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514715113)
+- La suite y el typecheck en local en cada paso (116 y después 124 tests).
+- La cobertura en local y en CI. [La corrida del PR #27](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38514715113)
   dejó los artefactos `cobertura-backend` y `cobertura-frontend`.
-- Que el umbral **frena de verdad**, dos veces: en local, forzando un umbral
-  de 99 % por línea de comando (`exit 1` con el `ERROR: Coverage…`), y en CI
-  con el PR #28.
-- El script del Summary, en sus tres salidas: tabla, archivo inexistente,
-  cero archivos medidos.
-
-Lo que **no** puedo declarar como verificado: la tabla del Summary en la
-página del run la vi en local (es lo que imprime el script), pero la página
-de la corrida no se puede leer sin sesión desde fuera. Queda para abrirla a
-mano antes de la defensa.
+- Que el umbral frena: en local, forzando 99 % por línea de comando (sale
+  con `exit 1` y el `ERROR: Coverage…`), y en CI con el #28.
+- El script del Summary en sus tres salidas: la tabla, el archivo que no
+  existe y cero archivos medidos.
 
 ---
 
 ## TP6 — CD: environments, aprobaciones y despliegue
 
-Escrito *as-built*, con cada decisión al lado del enlace que la prueba.
+Lo escribí después de hacerlo (*as-built*), con el enlace de cada cosa al
+lado.
 
 ### Enlaces de este TP
 
@@ -1039,15 +995,15 @@ Escrito *as-built*, con cada decisión al lado del enlace que la prueba.
 |---|---|
 | Paquete del backend, público | https://github.com/users/mat1v1dal/packages/container/package/notia-api |
 | Paquete del frontend, público | https://github.com/users/mat1v1dal/packages/container/package/notia-web |
-| Cadena 1: corrida de un PR con todo en verde y «Entrar al registry» **salteado** | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38643492664/job/116124921426 |
-| Cadena 2: corrida de `main` donde «Construir y publicar» es el **último** paso | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38655686748/job/116199586127 |
-| **QA** | http://201.32.128.192:8081 |
-| **PROD** | http://201.32.128.192:8082 |
+| Cadena 1: corrida de un PR con todo en verde y «Entrar al registry» salteado | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38643492664/job/116124921426 |
+| Cadena 2: corrida de `main` donde «Construir y publicar» es el último paso | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/38655686748/job/116199586127 |
+| QA | http://201.32.128.192:8081 |
+| PROD | http://201.32.128.192:8082 |
 | El rechazo, con su motivo | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39550421779 |
-| QA verde → esperando → aprobado → PROD verde | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39553490668 |
-| Qué commit está en cada entorno, y desde cuándo | https://github.com/mat1v1dal/notia-ingsoft3/deployments |
+| QA verde, esperando aprobación, aprobado, PROD verde | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39553490668 |
+| Qué commit está en cada entorno y desde cuándo | https://github.com/mat1v1dal/notia-ingsoft3/deployments |
 
-Las dos imágenes se bajan sin credenciales:
+Las imágenes se bajan sin credenciales:
 
 ```bash
 docker logout ghcr.io
@@ -1055,71 +1011,64 @@ docker pull --platform linux/amd64 ghcr.io/mat1v1dal/notia-api:sha-be53a80357ddb
 docker pull --platform linux/amd64 ghcr.io/mat1v1dal/notia-web:sha-be53a80357ddbcb28bbacdc45abfeebd71d532bd
 ```
 
-### Dónde despliego, y por qué no Render + Neon
+### Por qué un VPS y no Render + Neon
 
-En un **VPS propio** (DonWeb, Ubuntu 24.04, 2 vCPU, 2 GB). El enunciado
-acepta «Render+Neon, tu nube, o el fallback local, con el mismo contrato».
-Elegí el VPS por una razón de fondo, no de comodidad: **Render reconstruye la
-app desde el repositorio**, así que lo que corre en QA no es la imagen que el
-pipeline verificó sino otra construcción del mismo commit. En el VPS el
-pipeline despliega **la imagen exacta** que publicó, por su tag
-`sha-<commit>`. «Se promueve lo mismo que se verificó» es literalmente cierto,
-no una aproximación.
+Despliego en un VPS que ya tenía contratado en DonWeb (Ubuntu 24.04, 2
+vCPU, 2 GB de RAM). El enunciado acepta «Render+Neon, tu nube, o el fallback
+local». No corro nada en mi máquina: los dos entornos están en el servidor y
+los despliega el pipeline.
 
-La garantía que con Render se pierde, para la pregunta de la defensa: entre
-el build de mi pipeline y el de Render pueden cambiar la imagen base
-(`node:24-alpine` se actualiza), el registry de npm o cualquier cosa que el
-Dockerfile baje de la red. Dos builds del mismo commit no son la misma
-imagen. Con el VPS ese riesgo no existe porque no hay segundo build.
+El VPS además me resolvía algo que Render no. Render reconstruye la app desde
+el repositorio, así que lo que corre en QA no es la imagen que verificó mi
+pipeline sino otro build del mismo commit. Entre un build y otro pueden
+cambiar la imagen base (`node:24-alpine` se actualiza), lo que baja npm o
+cualquier cosa que el Dockerfile traiga de la red. En el VPS el pipeline
+despliega la imagen que publicó, por su tag `sha-<commit>`, y no hay segundo
+build.
 
-Cada entorno es un **proyecto de Compose aparte** (`notia-qa`, `notia-prod`)
-con su red, su Postgres y su volumen (`notia-qa_pgdata`,
-`notia-prod_pgdata`). El compose es uno solo,
-[`deploy/compose.vps.yml`](deploy/compose.vps.yml): lo que cambia entre
-entornos llega por el `.env` de cada carpeta del servidor. El pipeline copia
-el compose desde el repo en cada deploy, así que lo que corre es lo que se lee
-acá.
+Cada entorno es un proyecto de Compose aparte (`notia-qa` y `notia-prod`),
+con su red, su Postgres y su volumen (`notia-qa_pgdata` y
+`notia-prod_pgdata`). El compose es uno solo, [`deploy/compose.vps.yml`](deploy/compose.vps.yml),
+y lo que cambia entre entornos está en el `.env` de cada carpeta del
+servidor. El pipeline copia el compose desde el repo en cada deploy, así que
+lo que corre es lo que está acá.
 
-### Por qué el artefacto se publica sólo con la verificación en verde
+### Por qué sólo se publica lo que pasó la verificación
 
-Porque si se publicara igual, estar en el registry dejaría de significar
-«esto pasó la verificación» y pasaría a significar «alguien lo construyó
-alguna vez». Lo que se despliega sale del registry: si el registry miente, el
-deploy hereda la mentira.
+Del registry sale lo que se despliega. Si se publicara una imagen con los
+tests en rojo, estar en el registry dejaría de querer decir que pasó la
+verificación, y cualquier deploy podría llevar código roto a QA.
 
-La garantía sale de encadenar tres cosas, ninguna nueva:
+Lo garantizan tres cosas que ya tenía:
 
-1. **Nada entra a `main` sin los cinco checks en verde** (TP4 y TP5).
-2. **Sólo `main` publica.** El `push:` del build y el `if:` del login exigen
-   evento `push` **y** rama `main`. En un PR construye y no sube nada: es la
-   primera corrida de la tabla de arriba.
-3. **El build no arranca si la verificación falló.** Acá me aparté de la
-   guía: ella pone tests y build en el mismo job y la condición es el orden de
-   los pasos. Mis tests corren en su propio job desde el TP5, con su propio
-   check obligatorio, así que la misma garantía va un nivel más arriba: el job
-   de build tiene `needs:` sobre el typecheck y los tests. Si fallan, ni
-   arranca.
+1. Nada entra a `main` sin los cinco checks en verde (TP4 y TP5).
+2. Sólo `main` publica. El `push:` del build y el `if:` del login piden que
+   el evento sea `push` y la rama `main`. En un PR construye y no sube nada:
+   es la primera corrida de la tabla, con el login salteado.
+3. El build no arranca si la verificación falló. Acá hice algo distinto de
+   la guía, que pone tests y build en el mismo job y depende del orden de los
+   pasos. Mis tests ya corrían en su propio job desde el TP5, con su check
+   obligatorio, así que puse la condición en los `needs:` del job de build:
+   si el typecheck o los tests fallan, el build ni empieza.
 
-Lo que **no** garantiza: un `docker push` a mano desde mi notebook entra
-igual. La cadena cubre lo que publica el pipeline, no lo que físicamente
-puede entrar. Lo que lo cerraría es desplegar por **digest** (el hash del
-contenido) en vez de por tag: un tag se puede volver a apuntar a otra imagen,
-un digest no.
+Lo que no cubre: yo puedo hacer un `docker push` a mano desde mi máquina y
+entra igual. La cadena controla lo que publica el pipeline. Para cerrar eso
+habría que desplegar por digest (el hash de la imagen) en vez de por tag,
+porque un tag se puede mover a otra imagen y un digest no.
 
-### Continuous Delivery, no Deployment
+### Continuous Delivery
 
-Implementé **Continuous Delivery**: todo lo que entra a `main` queda listo
-para producción y llega solo a QA, pero a PROD sólo con una aprobación.
-**Continuous Deployment** sería sacar el gate humano y que cada merge verde
-llegue a PROD.
+Lo que armé es Continuous Delivery. Todo lo que entra a `main` queda listo
+para producción y llega solo a QA, pero a PROD sólo con mi aprobación.
+Continuous Deployment sería sacar esa aprobación y que cada merge en verde
+llegue directo a PROD.
 
-No lo quiero hoy porque lo que me haría confiar en un deploy sin mirar no
-existe todavía: no hay tests end-to-end (TP7), no hay métricas ni alertas que
-digan si el deploy empeoró algo, y el rollback es manual. Con esas tres cosas,
-sí: en una app de un solo usuario el gate humano compra poco una vez que las
-máquinas pueden decidir solas.
+Hoy no me animaría. Al cerrar este TP no tenía tests e2e (llegaron en el
+TP7), ni métricas que me avisen si un deploy empeoró algo, y el rollback es
+a mano. Con esas tres cosas, en una app que uso yo solo, la aprobación
+aportaría poco y la sacaría.
 
-### La cadena de jobs y el alcance de cada secret
+### La cadena de jobs y los secrets
 
 ```
 Typecheck ─┬─► Build backend ──┐
@@ -1128,258 +1077,252 @@ Typecheck ─┬─► Build frontend ─┘   environment:     environment:
 Tests front┘                       qa (sin reglas)  production (required reviewer)
 ```
 
-- `Deploy a QA` tiene `needs` sobre los dos builds (sin imagen publicada no
-  hay qué desplegar) y `if:` de evento `push` a `main` (los PRs verifican,
-  sólo `main` despliega).
-- `Deploy a PROD` tiene `needs: deploy-qa` y **no repite el `if`**: lo hereda
-  por la cadena, porque en un PR `Deploy a QA` no corre.
-- Los dos usan la acción compuesta
-  [`desplegar-en-vps`](.github/actions/desplegar-en-vps/action.yml): QA y
-  PROD se despliegan con **el mismo código**. Lo único que cambia es el
-  environment que la llama, y con él la clave, la carpeta y el puerto.
-- Se despliega `github.sha`, el commit de **esa** corrida. Entre que una
-  corrida queda esperando aprobación y que alguien aprueba, `main` puede
-  moverse; el aprobador firma ese sha y es ese el que sube.
-- `concurrency` por entorno con `cancel-in-progress: false`: dos deploys al
-  mismo entorno no se pisan, el segundo espera.
+`Deploy a QA` necesita los dos builds, porque sin imagen publicada no hay
+nada que desplegar, y tiene un `if:` para que sólo corra en un push a
+`main`. `Deploy a PROD` necesita a QA y no repite el `if`: como en un PR QA
+no corre, PROD tampoco.
 
-**Los secrets.** Hay un `VPS_SSH_KEY` **por environment**, y son claves
-distintas. Las dos entran al servidor como `notia-deploy`, un usuario sin
-root, en el grupo `docker`. La de PROD vive en el environment `production`:
-**sin aprobación no la lee nadie**, ni siquiera un job del mismo workflow. Si
-estuviera en el repo, cualquier job podría desplegar a PROD sin pasar por el
-gate, y la aprobación sería decorado.
+Los dos usan la misma acción, [`desplegar-en-vps`](.github/actions/desplegar-en-vps/action.yml).
+QA y PROD se despliegan con el mismo código, y lo que cambia es el
+environment que la llama (y con él la clave, la carpeta y el puerto).
 
-Los secretos de la app (contraseña de la base, de la app, firma de sesión,
-token del webhook) **no pasan por GitHub**: se generaron en el servidor, en el
-`.env` de cada entorno, con permisos `600`. El pipeline sólo toca una línea de
-ese archivo, `NOTIA_TAG`.
+Se despliega `github.sha`, el commit de esa corrida. Una corrida puede
+quedar horas esperando la aprobación, y mientras tanto `main` se puede
+mover. Lo que apruebo es ese sha, y ese es el que sube.
 
-El **host key** del servidor va fijo en la acción. El runner verifica que
-habla con mi servidor y no con cualquiera que conteste esa IP.
+Hay un `VPS_SSH_KEY` en cada environment, y son dos claves distintas. Las
+dos entran como `notia-deploy`, un usuario del servidor sin root que está en
+el grupo `docker`. La de PROD está en el environment `production`, así que
+ningún job la puede leer sin que yo apruebe. Si estuviera como secret del
+repo, cualquier job podría desplegar a PROD sin pasar por la aprobación.
 
-### Qué mira el aprobador antes de aprobar
+Los secretos de la app (contraseña de la base, de la app, firma de la sesión
+y token del webhook) no pasan por GitHub. Están en el `.env` de cada
+entorno en el servidor, con permisos `600`, y el pipeline sólo cambia una
+línea de ese archivo, `NOTIA_TAG`.
 
-1. **Que QA esté verde con el commit de esta corrida**: el smoke lo verifica,
-   pero abro http://201.32.128.192:8081 y miro la versión en la barra.
-2. **Qué trae el cambio**: el PR mergeado. Si toca el compose, el `.env` o
-   las migraciones, lo miro con tiempo; un cambio de esquema no se deshace con
-   un rollback.
-3. **Que no haya otra corrida esperando más vieja.** Aprobar una corrida vieja
-   después de una nueva hace retroceder PROD. La regla es mía: la vieja se
-   rechaza a mano.
+La huella del servidor (host key) está fija en la acción, para que el runner
+no se conecte a cualquiera que conteste en esa IP.
 
-Lo que el aprobador **no** puede ver: si el cambio empeora algo que nadie
-prueba (rendimiento, un flujo que el smoke no toca), ni cómo se comporta con
-los datos reales de PROD, que son distintos de los de QA. Para eso faltan
-métricas y alertas, que es el TP9.
+### Qué miro antes de aprobar
 
-**El rechazo.** En la [primera corrida](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39550421779)
-el merge sólo agregaba el job de PROD, sin nada para el usuario. Lo rechacé:
-*«este merge sólo agrega el job de PROD, todavía no trae ningún cambio para
-el usuario. Espero el indicador de versión (#35) para que el primer deploy a
-PROD sea algo que se pueda comprobar en la pantalla.»* El job quedó en
-*failure*: la máquina obedeció al humano.
+1. Que QA esté en verde con el commit de esa corrida. El smoke lo verifica,
+   pero además abro http://201.32.128.192:8081 y miro la versión en la
+   barra.
+2. Qué trae el PR. Si toca el compose, el `.env` o las migraciones, lo miro
+   con más tiempo, porque un cambio en la base no se deshace con un rollback.
+3. Que no haya una corrida más vieja esperando. Si apruebo una vieja después
+   de una nueva, PROD vuelve para atrás. La vieja la rechazo.
 
-**La aprobación.** En la [siguiente](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39553490668)
-llegó el indicador de versión (#35). QA verde al primer intento, aprobé, y
+Lo que no puedo ver al aprobar: si el cambio empeora algo que ninguna prueba
+mira (el rendimiento, un flujo que el smoke no toca), ni cómo se comporta con
+los datos de PROD, que no son los de QA. Para eso me faltaban métricas, que
+llegaron en el TP9.
+
+El rechazo está en la [primera corrida](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39550421779).
+Ese merge sólo agregaba el job de PROD y no cambiaba nada que se pudiera ver,
+así que lo rechacé con este comentario: «este merge sólo agrega el job de
+PROD, todavía no trae ningún cambio para el usuario. Espero el indicador de
+versión (#35) para que el primer deploy a PROD sea algo que se pueda
+comprobar en la pantalla». El job de PROD quedó en *failure*.
+
+En la [siguiente](https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39553490668)
+ya estaba el indicador de versión (#35). QA pasó al primer intento, aprobé, y
 PROD quedó con el commit `be53a80`, que se ve en la barra de la app.
 
-### La misma imagen en los dos entornos
+### La misma imagen del front en los dos entornos
 
 El `nginx.conf` del TP2 tenía escrito `http://notia-api:3000`. Ahora es una
-plantilla, [`default.conf.template`](packages/web/default.conf.template), que
-la imagen de nginx procesa al arrancar.
+plantilla, [`default.conf.template`](packages/web/default.conf.template),
+que la imagen de nginx completa al arrancar con las variables de entorno.
 
-| Por variable de entorno | Adentro de la imagen |
+| Llega por variable | Queda adentro de la imagen |
 |---|---|
-| `BACKEND_URL`: dónde está la API | los estáticos de la SPA |
-| `DNS_RESOLVER`: quién resuelve ese nombre | la plantilla de nginx |
-| `PORT`: dónde escucha | el código de la API |
+| `BACKEND_URL`, dónde está la API | los archivos de la SPA |
+| `DNS_RESOLVER`, quién resuelve ese nombre | la plantilla de nginx |
+| `PORT`, dónde escucha | el código de la API |
 | `DATABASE_URL` y los secretos de la API | `GIT_COMMIT`, el commit del que salió |
 
-Los defaults del Dockerfile son los de compose: `docker compose up` del TP2
-sigue andando sin tocar nada. En el VPS los dos entornos usan el mismo
-`BACKEND_URL` (el nombre del servicio), porque cada proyecto de Compose tiene
-su propia red y su propio `notia-api`. La plantilla sigue siendo la que
-permitiría, en otra nube, apuntar cada front a su API.
+Los valores por defecto del Dockerfile son los de compose, así que
+`docker compose up` sigue andando igual que en el TP2. En el VPS los dos
+entornos usan el mismo `BACKEND_URL`, porque cada proyecto de Compose tiene
+su red y su propio `notia-api`. Si mañana los muevo a otra nube, cada front
+apunta a su API cambiando esa variable.
 
-### Qué prueba el smoke test, y qué no
+### El smoke test
 
-[`smoke.sh`](.github/scripts/smoke.sh) reintenta hasta 20 veces cada 10 s y
-falla el job si no se cumplen las tres:
+[`smoke.sh`](.github/scripts/smoke.sh) reintenta hasta 20 veces, cada 10
+segundos, y falla el job si no se cumplen tres cosas:
 
-1. `/salud` contesta, y **toca la base** (`select 1`): un `/salud` que sólo
-   dice «el proceso vive» daba verde con la base rota.
-2. El front sirve la página.
-3. **El commit que informa `/salud` es el que se desplegó.** Sin esto, un
-   deploy que dejó corriendo la versión anterior daba verde. La guía lo marca
-   opcional para el TP6; lo hice obligatorio porque es lo único que contesta
-   desde afuera «¿qué versión corre?».
+1. Que `/salud` conteste. Lo cambié para que haga un `select 1` contra la
+   base, porque antes devolvía `{ok:true}` aunque la base estuviera caída.
+2. Que el front sirva la página.
+3. Que el commit que informa `/salud` sea el que se desplegó. Sin esto, un
+   deploy que dejó corriendo la versión anterior daría verde. La guía lo
+   pone como opcional en el TP6; lo agregué igual porque es la única forma
+   de saber desde afuera qué versión está corriendo.
 
-Reintenta porque el contenedor tarda unos segundos en estar sano, no por cold
-start: el VPS no duerme. En las corridas reales pasó al primer intento.
+Los reintentos son por los segundos que tarda el contenedor nuevo en estar
+sano. El VPS no se duerme como Render, y en las corridas reales pasó al
+primer intento.
 
-Lo que **no** prueba: que se pueda entrar con la contraseña, que las vistas
-funcionen, que una migración haya dejado los datos bien. Contesta, y contesta
-con la versión correcta; no dice si la versión correcta hace lo que debe. Eso
-es el TP7.
+El smoke no prueba que se pueda entrar con la contraseña, que las vistas
+anden, ni que una migración haya dejado bien los datos. Eso lo cubre la e2e
+del TP7.
 
-### La letra chica de mi infraestructura
+### Las condiciones de mi servidor
 
-No hay free tier: el contrato es el del VPS, y es más simple.
+No hay free tier, pero tiene sus límites:
 
-- **Sin cold start ni sleep**: los contenedores corren siempre.
-- **2 GB de RAM compartidos** con otro proyecto que ya corría ahí. Por eso el
-  compose pone `mem_limit` a cada servicio y un Postgres chico
-  (`shared_buffers=64MB`). Con los dos entornos arriba quedan ~1,1 GB libres.
-- **Sin minutos de build**: el servidor no construye nada, baja imágenes.
-- **Vence el 29/10/2026.** Las URLs tienen que vivir hasta la defensa: está
-  renovado o se cae todo.
-- **Sin HTTPS.** Los puertos 80 y 443 los usa el Caddy del otro proyecto. Por
-  eso los entornos van por IP y puerto, y la cookie de sesión dejó de ser
-  `Secure` fija: ahora lo es sólo sobre https (con `Secure` sobre http el
-  navegador la descarta y no se puede entrar).
+- No hay cold start: los contenedores no se duermen.
+- Son 2 GB de RAM que comparto con otro proyecto que ya corría en el
+  servidor. Por eso cada servicio tiene `mem_limit` y Postgres está
+  configurado chico (`shared_buffers=64MB`). Con los dos entornos arriba
+  quedan unos 1,1 GB libres.
+- No hay minutos de build: el servidor no construye, baja imágenes.
+- El VPS vence el 29/10/2026 y hay que renovarlo para que las URLs sigan
+  vivas.
+- No hay HTTPS. Los puertos 80 y 443 los usa el Caddy del otro proyecto, así
+  que los entornos van por IP y puerto. Eso me obligó a cambiar la cookie de
+  sesión, que era `Secure` siempre: sobre http el navegador la descartaba y no
+  se podía entrar. Ahora es `Secure` sólo cuando la conexión es https.
 
-### Cómo comprobé que cada entorno usa su propia base
+### Cómo comprobé que cada entorno tiene su base
 
-Inserté un item `SOY PROD — prueba de separación de bases` **sólo** en la
-base de PROD, directo con `psql`, y conté en las dos:
+Inserté un item `SOY PROD — prueba de separación de bases` sólo en la base
+de PROD, con `psql`, y conté en las dos:
 
 ```
 == qa    soy_prod=0  total=0   volumen notia-qa_pgdata
 == prod  soy_prod=1  total=1   volumen notia-prod_pgdata
 ```
 
-En la defensa: entro con la contraseña de cada entorno y se ve en PROD y no
+En la defensa lo muestro entrando a cada entorno: el item está en PROD y no
 en QA.
 
-### Deployment pattern para una producción real
+### Qué patrón usaría con usuarios reales
 
-**Blue-green.** Hoy el deploy es *recreate*: Compose baja el contenedor viejo
-y levanta el nuevo, con unos segundos sin servicio. Con usuarios reales
-correría dos proyectos de Compose de PROD, *blue* y *green*, y el Caddy que
-ya está en el servidor apuntando a uno solo. El deploy levanta el inactivo, lo
-prueba con el smoke, y cambia el Caddy de un lado al otro. El rollback es
-volver a cambiarlo: inmediato, sin bajar ninguna imagen.
+Blue-green. Hoy el deploy recrea los contenedores y hay unos segundos sin
+servicio. Con usuarios tendría dos proyectos de Compose de PROD, *blue* y
+*green*, y el Caddy que ya está en el servidor apuntando a uno. El deploy
+levanta el que está inactivo, le corre el smoke y recién ahí cambio el Caddy.
+Para volver atrás alcanza con cambiarlo de nuevo, sin bajar imágenes.
 
-Por qué ese y no **canary**: canary manda un porcentaje del tráfico a la
-versión nueva y decide mirando métricas. Hoy no tengo métricas ni tráfico
-suficiente para que un 5 % diga algo: es una app de un usuario. Lo que le
-falta para hacerlo en serio es observabilidad (tasa de errores y latencia por
-versión) y un balanceador que reparta por porcentaje.
+Canary no me sirve hoy. Manda una parte del tráfico a la versión nueva y
+decide mirando métricas, y yo no tengo ni métricas por versión ni tráfico
+suficiente: la app la uso yo. Para hacerlo en serio necesitaría tasa de
+errores y latencia por versión, y un balanceador que reparta por porcentaje.
+Rolling tampoco, porque necesita varias réplicas y tengo una por entorno.
 
-Por qué no **rolling**: necesita varias réplicas, y tengo una por entorno.
-
-Y **feature flags** para separar deploy de release: el indicador de versión
+Con feature flags separaría el deploy del release. El indicador de versión
 podría haber entrado apagado y prenderse sin desplegar. En notia los usaría
-para el agente de WhatsApp: desplegar un cambio en cómo extrae fechas y
-prenderlo sólo para un chat antes que para todos.
+en el agente de WhatsApp, para probar un cambio en cómo extrae las fechas en
+un solo chat antes de prenderlo en todos.
 
 ### El rollback, medido
 
-Como el deploy es por imagen, volver atrás es desplegar el commit anterior:
-la imagen ya está en el registry. [`deploy/rollback.sh`](deploy/rollback.sh)
-fija `NOTIA_TAG`, hace `pull` + `up -d`, y cronometra hasta que `/salud`
-**desde afuera** informa el commit pedido.
+Como despliego imágenes, volver atrás es desplegar el commit anterior, que ya
+está en el registry. [`deploy/rollback.sh`](deploy/rollback.sh) cambia
+`NOTIA_TAG`, hace `pull` y `up -d`, y cronometra hasta que `/salud`, desde
+afuera, informa el commit pedido.
 
-Lo corrí de verdad sobre PROD, al commit del deploy anterior (`a04616c`) y de
-vuelta a `be53a80`:
+Lo probé sobre PROD, al deploy anterior (`a04616c`) y de vuelta a `be53a80`:
 
 ```
 corriendo antes: be53a80…   inicio: 03:34:52   fin: 03:35:02   rollback de prod: 10 s
 corriendo antes: a04616c…   inicio: 03:35:02   fin: 03:35:12   vuelta:           10 s
 ```
 
-**10 segundos**, porque no hay build: es bajar una imagen que ya está y
-recrear dos contenedores. El paso a paso si un deploy aprobado sale mal:
+Tarda 10 segundos porque no hay que construir nada: baja una imagen que ya
+existe y recrea dos contenedores. Si un deploy aprobado sale mal:
 
-1. Leer en *Deployments* qué commit estaba antes en `production`.
-2. `deploy/rollback.sh prod <ese sha> <clave de PROD>`.
-3. Abrir PROD y mirar la versión en la barra.
+1. Miro en *Deployments* qué commit estaba antes en `production`.
+2. Corro `deploy/rollback.sh prod <ese sha> <clave de PROD>`.
+3. Abro PROD y controlo la versión en la barra.
 
-Dos cosas que hay que decir. **No pasa por el gate**: es un camino de
-emergencia con la clave de PROD, y por eso esa clave no la tiene nadie más que
-yo. La alternativa con gate es re-correr el job `Deploy a PROD` de la corrida
-anterior, que vuelve a pedir aprobación y sólo funciona hasta 30 días. Y
-**no deshace los datos**: si el deploy malo corrió una migración que borró o
-cambió una columna, volver la imagen no la restaura. Para eso harían falta
-migraciones reversibles o un backup previo al deploy.
+Este camino no pasa por la aprobación. Es para emergencias y usa la clave de
+PROD, que tengo sólo yo. La alternativa con aprobación es volver a correr el
+job `Deploy a PROD` de la corrida anterior, que la pide de nuevo y sólo
+funciona dentro de los 30 días.
 
-La métrica DORA que esto ejercita es el **tiempo de recuperación** (*time to
-restore service*).
+El rollback no deshace los datos. Si el deploy malo corrió una migración que
+borró o cambió una columna, volver la imagen no la recupera. Para eso
+necesitaría migraciones reversibles o un backup antes de cada deploy.
 
-### Si el VPS desaparece mañana
+La métrica DORA que mide esto es el tiempo de recuperación (*time to restore
+service*).
 
-Sobrevive sin cambios casi todo: el CI, las imágenes en GHCR, los
-environments con su gate, el smoke, el compose. Lo único atado al VPS es la
-acción de deploy (host, puerto, host key) y los `.env` del servidor. En otra
-máquina con Docker son tres líneas y dos archivos. Es la ventaja de desplegar
-contenedores: el destino es intercambiable.
+### Si el VPS desaparece
 
-### Problemas encontrados
+Casi todo sigue igual: el CI, las imágenes en GHCR, los environments con la
+aprobación, el smoke y el compose. Lo único atado a este servidor es la
+acción de deploy (host, puerto y host key) y los `.env` de cada entorno. En
+otra máquina con Docker son esas líneas y esos dos archivos.
 
-**El primer push al registry falló con `permission_denied: write_package`.**
-Los paquetes los había creado a mano en el TP2, con mi token, y no estaban
-vinculados al repositorio. El `GITHUB_TOKEN` de la corrida sólo escribe en
-paquetes que le dieron acceso al repo. Se resolvió en la configuración de cada
-paquete (*Manage Actions access → Write*) y se relanzaron los dos jobs. El
-pipeline tenía exactamente el permiso que declaró, y nada más.
+### Problemas
 
-**El SSH.** El servidor escucha SSH en el 5078, con el 22 cerrado en el
-firewall del proveedor. Primero se abrió el 22 por error mío; el pipeline usa
-el 5078 con su host key fijo, y el 22 se vuelve a cerrar.
+El primer push al registry falló con `permission_denied: write_package`. Los
+paquetes los había creado a mano en el TP2 con mi token, y no estaban
+vinculados al repositorio. El `GITHUB_TOKEN` de una corrida sólo puede
+escribir en paquetes que tengan acceso al repo. Lo arreglé en la
+configuración de cada paquete (*Manage Actions access*, rol *Write*) y volví
+a correr los dos jobs.
 
-**El primer smoke falló con el deploy hecho.** El job entró, bajó las
-imágenes y QA quedó corriendo, pero el smoke no llegaba: el 8081 estaba
-cerrado en el firewall del proveedor. Abierto el puerto, re-corrí el job
-fallido y pasó al primer intento. Es exactamente el caso que el smoke existe
-para atrapar: el deploy «terminó» y el entorno no respondía.
+El SSH del servidor escucha en el puerto 5078 y el 22 estaba cerrado en el
+firewall del proveedor. Lo abrí sin necesidad al principio. El pipeline usa
+el 5078, con la huella fija, y el 22 se vuelve a cerrar.
 
-**El primer rechazo quedó sin comentario.** Lo re-corrí (*Re-run failed
-jobs*), quedó esperando otra vez, y lo rechacé con el motivo escrito. En la
-corrida figuran los dos.
+El primer smoke falló con el deploy hecho: el job entró, bajó las imágenes y
+QA quedó corriendo, pero desde afuera no se llegaba porque el 8081 estaba
+cerrado en el firewall. Lo abrí, volví a correr el job y pasó al primer
+intento. Es justo lo que el smoke tiene que atrapar: el deploy terminó y el
+entorno no respondía.
 
-**El tag en el lugar equivocado.** Creé `v6.0.0` sobre el commit en PROD
-antes de que entrara esta sección, y la corrección navega el tag. Lo borré a
-los minutos y lo creé de nuevo sobre el commit de esta documentación, después
-de que llegó a PROD.
+El primer rechazo lo hice sin escribir el comentario. Volví a correr el job
+(*Re-run failed jobs*), quedó esperando otra vez y lo rechacé con el motivo.
+En la corrida se ven los dos.
 
-### Declaración de uso de IA
+Creé el tag `v6.0.0` sobre el commit que estaba en PROD antes de que entrara
+esta sección, y la corrección se hace navegando el tag. Lo borré a los pocos
+minutos y lo volví a crear sobre el commit de la documentación, una vez que
+llegó a PROD.
 
-Usé **Claude Code**. Fue asistido: los cambios del workflow (publicación,
-deploy a QA y a PROD, la acción compuesta), el compose del VPS, la plantilla
-de nginx, `/salud` con commit, el smoke test, el script de rollback, el
-indicador de versión, y la redacción de esta sección. También la
-configuración del servidor: el usuario `notia-deploy`, las claves por entorno
-y los `.env`.
+### Uso de IA
 
-No fue asistida la decisión de usar el VPS en vez de Render, ni la de
-rechazar y aprobar: las corridas las revisé y decidí yo.
+Trabajé con Claude Code. Escribió los cambios del workflow (publicar, deploy
+a QA y a PROD, la acción compartida), el compose del VPS, la plantilla de
+nginx, el `/salud` con el commit, el smoke, el script de rollback, el
+indicador de versión y la primera versión de esta sección. También configuró
+el servidor por SSH: el usuario `notia-deploy`, una clave por entorno y los
+`.env`.
 
-**Cómo lo verifiqué.** Todo lo de esta sección se ejecutó:
+La idea de usar el VPS en vez de Render fue mía. El rechazo y las
+aprobaciones los hice yo desde GitHub; el texto del rechazo me lo propuso el
+asistente.
 
-- La plantilla de nginx, en Docker: la misma imagen rinde
+Lo verificamos corriéndolo:
+
+- La plantilla de nginx en Docker: la misma imagen genera
   `listen 80 / notia-api:3000` sin variables y otra configuración con ellas.
-- El smoke, contra el stack local: pasa con el commit correcto, falla con
+- El smoke contra el stack local: pasa con el commit correcto y falla con
   otro.
-- La cadena del registry, en las dos corridas de la tabla de arriba, y el
+- La cadena del registry en las dos corridas de la tabla, y el
   `docker pull` sin credenciales.
-- QA y PROD, desplegados por el pipeline y verificados desde afuera:
-  `/salud` responde con la base viva y el commit `be53a80` en los dos.
-- La separación de bases, con el dato en una sola.
-- El rollback, cronometrado ida y vuelta.
+- QA y PROD desplegados por el pipeline y consultados desde afuera: `/salud`
+  responde con la base viva y el commit `be53a80` en los dos.
+- La separación de las bases, con el item en una sola.
+- El rollback, ida y vuelta, cronometrado.
 
-Lo que **no** está verificado: el comportamiento con dos corridas esperando
-aprobación a la vez (el `concurrency` lo evita para deploys simultáneos, pero
-no ordena la cola de aprobaciones), y blue-green, que está diseñado y no
-implementado.
+No llegué a probar qué pasa con dos corridas esperando aprobación al mismo
+tiempo (el `concurrency` evita dos deploys a la vez, pero no ordena las
+aprobaciones), y blue-green está pensado pero no implementado.
 
 ---
 
 ## TP7 — Contenedores en el pipeline: integración y e2e como gate
 
-Escrito *as-built*, con cada decisión al lado del enlace que la prueba.
+Lo escribí después de hacerlo (*as-built*), con el enlace de cada cosa al
+lado.
 
 ### Enlaces del TP7
 
@@ -1388,136 +1331,138 @@ Escrito *as-built*, con cada decisión al lado del enlace que la prueba.
 | Paquete del backend, con sus etiquetas `sha-…` | https://github.com/users/mat1v1dal/packages/container/package/notia-api |
 | Paquete del frontend, con sus etiquetas `sha-…` | https://github.com/users/mat1v1dal/packages/container/package/notia-web |
 | El commit que rompió la app | https://github.com/mat1v1dal/notia-ingsoft3/pull/41 |
-| La corrida con **integración verde, e2e roja** y PROD sin arrancar | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39650049056 |
+| La corrida con integración verde, e2e roja y PROD sin arrancar | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39650049056 |
 | Su reporte de integración, en verde | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39650049056/artifacts/12369720125 |
 | Su reporte de e2e, en rojo, con captura y traza | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39650049056/artifacts/12370086025 |
 | El arreglo | https://github.com/mat1v1dal/notia-ingsoft3/pull/42 |
-| La corrida completa en verde, hasta PROD, con la aprobación | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39670758826 |
-| **QA** | http://201.32.128.192:8081 |
-| **PROD** | http://201.32.128.192:8082 |
+| La corrida completa en verde hasta PROD, con la aprobación | https://github.com/mat1v1dal/notia-ingsoft3/actions/runs/39670758826 |
+| QA | http://201.32.128.192:8081 |
+| PROD | http://201.32.128.192:8082 |
 
-### Cerrar la cadena: el entorno ejecuta la imagen
+### Los entornos ejecutan la imagen
 
-Esta tarea quedó hecha desde el TP6, y es la razón por la que elegí el VPS
-y no Render. Render reconstruye desde el repositorio; el VPS **baja la imagen
-del registry** por su etiqueta `sha-<commit>` y la ejecuta. No hay segundo
-build: lo que corre en QA y en PROD es, bit a bit, lo que el pipeline
-construyó y verificó.
+Esta parte ya estaba resuelta desde el TP6, y fue una de las razones para
+usar el VPS. Render reconstruye desde el repo; el VPS baja del registry la
+imagen `sha-<commit>` y la ejecuta. Lo que corre en QA y en PROD es la misma
+imagen que construyó y verificó el pipeline.
 
-**Build once, deploy many**, con mi ejemplo. En el TP6 descubrí que el
-backend corre TypeScript con `tsx` y que la imagen instala sus dependencias
-en el build. Si cada entorno construyera la suya, un `pnpm install` del
-martes y otro del jueves podrían resolver distinto aunque el lockfile sea el
-mismo (la imagen base `node:24-alpine` cambia), y QA y PROD correrían cosas
-diferentes con «el mismo código». Con una imagen, la pregunta no existe.
+Mi ejemplo de por qué importa construir una sola vez: la imagen del backend
+instala las dependencias durante el build y después corre TypeScript con
+`tsx`. Si cada entorno construyera la suya, un `pnpm install` de un día y
+otro de otro día podrían terminar distintos aunque el lockfile sea el mismo,
+porque `node:24-alpine` se actualiza. QA y PROD correrían cosas distintas con
+el mismo código, y con una sola imagen eso no puede pasar.
 
-**Cómo se comprueba desde afuera.** Tres caminos que dicen lo mismo:
+Desde afuera se comprueba de tres formas:
 
-- `/salud` de cada entorno informa el commit que corre, y la barra de la app
-  lo muestra.
-- El log del deploy de cada corrida muestra el `pull` de
+- `/salud` de cada entorno dice qué commit corre, y la barra de la app lo
+  muestra.
+- El log del deploy de cada corrida tiene el `pull` de
   `ghcr.io/mat1v1dal/notia-api:sha-<commit>` y el `docker compose ps` con esa
   imagen.
 - *Deployments* dice qué commit está en cada entorno, y esa etiqueta existe
   en los dos paquetes.
 
-En la defensa, en el servidor:
+En la defensa lo puedo mostrar en el servidor:
 
 ```bash
 ssh notia-vps 'docker ps --format "{{.Names}}\t{{.Image}}" | grep notia'
 ```
 
-Lo que el smoke **no** alcanza a probar: que la app funcione. Contesta, y con
-la versión correcta. Si el botón de anotar dejó de andar, el smoke sigue
-verde; lo prueba la corrida roja de arriba.
+El smoke sólo dice que el entorno contesta y con qué versión. Si se rompe el
+botón de anotar sigue en verde, y eso es lo que muestra la corrida roja de
+la tabla.
 
 ### Las etiquetas
 
-- **`sha-<commit>` en el registry.** Inmutable en la práctica: una por
-  commit, la pone el pipeline y nadie más. Garantiza **qué** imagen es.
-- **`v7.0.0` en git.** Nombra el commit que estaba en PROD al cerrar el TP.
-  Garantiza **cuál** de todas las imágenes es la de la entrega.
-- **No publico `latest`.** Es una etiqueta que se mueve: hoy apunta a una
-  imagen y mañana a otra. Un entorno que despliega `latest` no sabe qué
-  corre, y un rollback a `latest` no vuelve a ningún lado.
+`sha-<commit>` en el registry identifica qué imagen es. Hay una por commit y
+la pone sólo el pipeline. `v7.0.0` en git marca qué commit estaba en PROD al
+cerrar el TP, o sea cuál de todas esas imágenes es la entrega.
 
-**Del tag a la imagen, en un paso:**
+No publico `latest`, porque es una etiqueta que hoy apunta a una imagen y
+mañana a otra. Un entorno que despliega `latest` no sabe qué está
+corriendo, y un rollback a `latest` no vuelve a ningún lado.
+
+Del tag a la imagen:
 
 ```bash
 echo "sha-$(git rev-list -n1 v7.0.0)"   # la etiqueta en los dos paquetes
 ```
 
-### Las dos suites, y por qué no son lo mismo
+### Las dos suites
 
-Las dos corren contra QA desplegado, sin dobles: ni mocks de la API, ni una
-base en memoria, ni `page.route`. Viven en `packages/web/e2e/`.
+Las dos corren contra QA desplegado, sin mocks de la API, sin base en
+memoria y sin `page.route`. Están en `packages/web/e2e/`.
 
-**Integración** (`api.spec.ts`, Playwright sin navegador): le habla a la API
-por HTTP, con su Postgres de verdad.
+La de integración (`api.spec.ts`) usa Playwright sin navegador y le habla a
+la API por HTTP, con el Postgres de QA:
 
-1. Alta → la encuentra entre los abiertos → la cierra → ya no está.
-2. Alta con el texto vacío → `400`, y no se creó nada.
-3. La búsqueda encuentra un item **cerrado**. La elegí porque es la memoria
-   de la app: si se rompe, lo que pasó deja de poder encontrarse.
+1. Crea un item, lo encuentra entre los abiertos, lo cierra y comprueba que
+   ya no está.
+2. Manda un item con el texto vacío, recibe un `400` y comprueba que no se
+   creó nada.
+3. Busca un item cerrado. La elegí porque la búsqueda es lo que me deja
+   encontrar algo que ya pasó, y si se rompe pierdo esa memoria.
 
-**E2E** (`flujos.e2e.spec.ts`, Chromium real):
+La e2e (`flujos.e2e.spec.ts`) usa un Chromium real:
 
-1. Anotar algo → aparece → marcarlo hecho → desaparece, también al recargar.
-2. Contraseña equivocada → el usuario ve «Esa contraseña no es.» → no hay
-   sesión, y la API contesta `401`.
-3. Lo anotado **sigue ahí al recargar** y se encuentra buscando. Es el flujo
-   de todos los días: anotar y confiar en que está. Si mañana no anda, me
-   escribo a mí mismo.
+1. Anoto algo, aparece, lo marco hecho y desaparece, también después de
+   recargar.
+2. Con una contraseña equivocada aparece «Esa contraseña no es.», no hay
+   sesión y la API responde `401`.
+3. Lo que anoté sigue ahí al recargar y lo encuentro buscando. Es lo que
+   hago todos los días con la app: anotar y confiar en que va a estar. Si
+   eso deja de andar, el que se queja soy yo.
 
-**notia no borra items**: cerrar es su borrado, reversible a propósito (TP2).
-La limpieza de cada prueba es cerrar lo que creó y comprobar que ya no está
-entre los abiertos. Cada prueba fabrica un texto con la hora y un sufijo al
-azar, así ninguna encuentra el dato de otra.
+notia no borra items, los cierra, y eso es a propósito desde el TP2 porque
+cerrar se puede deshacer. Por eso cada prueba limpia cerrando lo que creó y
+comprobando que ya no figura entre los abiertos. Cada una usa un texto con la
+hora y un sufijo al azar, así no se mezclan los datos de dos corridas.
 
-**Qué no puse en cada suite.** En integración no hay nada de interfaz: eso
-es del navegador. En e2e no hay casos de borde de la API (el texto vacío, la
-búsqueda de cerrados): son más baratos y más precisos por HTTP. Y ninguna
-suite repite lo que ya cubren los 137 unit tests (la agrupación por fecha, el
-cliente con su doble, la autenticación del webhook). Es la pirámide: muchos
-unit, pocas de integración, menos e2e.
+En la integración no hay nada de pantalla, eso es del navegador. En la e2e no
+puse los bordes de la API (el texto vacío, buscar cerrados), porque por HTTP
+son más rápidos y más precisos. Y ninguna repite lo que ya cubren los 137
+unit tests, como la agrupación por fecha o la autenticación del webhook.
+Muchos unit, pocas de integración y menos e2e.
 
-**El par que da diagnóstico**, leído en la corrida roja:
+Cómo leo el resultado de las dos juntas:
 
 | Integración | E2E | Qué está roto |
 |---|---|---|
 | verde | verde | nada |
-| **verde** | **roja** | **el front**: la API y la base andan, lo que falla es lo que ve el usuario |
+| verde | roja | el front: la API y la base andan |
 | roja | roja | la API o la base |
-| roja | verde | una regla de la API que la interfaz no ejercita |
+| roja | verde | una regla de la API que la pantalla no usa |
 
-En el #41 cambié el texto del botón «Anotar» por «Agregar». Compilaba, los
-137 unit tests pasaban (ninguno mira ese texto), la integración no lo podía
-ver (no usa navegador). La e2e no encontró el botón y frenó la promoción. El
-par dijo **front**, y era el front.
+En el #41 cambié el texto del botón de «Anotar» a «Agregar». Compilaba,
+pasaban los 137 unit tests (ninguno mira ese texto) y la integración no lo
+podía ver porque no usa navegador. La e2e no encontró el botón y PROD no
+arrancó. Integración verde con e2e roja apuntaba al front, y era el front.
 
-Y la integración ya había encontrado algo antes, en su primera corrida
-contra QA: **la API aceptaba items con el texto vacío**. La interfaz no los
-manda, así que ningún test del front lo veía. Ahora es un `400`.
+La integración ya había encontrado un bug antes, la primera vez que la corrí
+contra QA: la API aceptaba items con el texto vacío. La pantalla no los
+manda, así que ningún test del front lo podía ver. Ahora la API devuelve
+`400`.
 
-**Por qué la integración es la amplia**, contra la API ya desplegada, y no
-la estrecha contra una API levantada en el job: prueba la API **con la base,
-la red y la configuración reales de QA**, que es lo que un usuario va a
-encontrar. Pierde precisión (si falla, puede ser la red) y velocidad, y
-comparte datos con todas las corridas. Por eso cada prueba crea y limpia lo
-suyo.
+Mi integración es la amplia, contra la API ya desplegada, y no una API
+levantada dentro del job. Así prueba la API con la base, la red y la
+configuración reales de QA, que es lo que va a encontrar un usuario. A
+cambio, si falla puede ser la red, tarda más, y comparte los datos con todas
+las corridas. Por eso cada prueba crea y limpia lo suyo.
 
-### Cold start y flakiness
+### Cold start y tests flaky
 
-El VPS no duerme, así que no hay cold start de proveedor. Lo que sí hay es un
-contenedor recién recreado que tarda segundos en estar sano: el smoke espera
-antes de que corran las suites, y los timeouts son generosos (60 s por
-prueba, 15 s por `expect`). Nunca se saltea una prueba porque el entorno no
-responde.
+El VPS no se duerme, así que no tengo el cold start de Render. Lo que sí pasa
+es que un contenedor recién recreado tarda unos segundos en estar sano: el
+smoke espera eso antes de que corran las suites, y los timeouts son largos
+(60 segundos por prueba y 15 por `expect`). Ninguna prueba se saltea si el
+entorno no responde.
 
-Un **test flaky** es uno que pasa y falla con el mismo código: depende de un
-tiempo, de un orden, de un dato que dejó otro. En CI hay **un** reintento, y
-Playwright marca como *flaky* la prueba que pasó al segundo intento: se ve,
-no se esconde. Las pruebas corren en serie (un worker) porque comparten QA.
+Un test flaky es uno que a veces pasa y a veces falla con el mismo código,
+porque depende de un tiempo, del orden o de un dato que dejó otra prueba. En
+CI hay un reintento, y si una prueba pasa en el segundo Playwright la marca
+como *flaky* en el reporte, así que se ve. Corren de a una (un solo worker)
+porque comparten QA.
 
 ### La cadena de jobs
 
@@ -1527,47 +1472,53 @@ no se esconde. Las pruebas corren en serie (un worker) porque comparten QA.
 ```
 
 `integracion` necesita `deploy-qa`, `e2e` necesita `integracion` y
-`deploy-prod` necesita `e2e`. Nada desarma el gate: ni `continue-on-error`,
-ni `|| true`, ni `if: always()` en ese tramo. Los reportes se publican aunque
-fallen (`!cancelled()` en el paso de upload, no en los jobs). PROD recibe la
-**misma** imagen que QA verificó: los dos deploys usan el `sha` de la
-corrida, y los dos smokes confirman el mismo commit.
+`deploy-prod` necesita `e2e`. En ese tramo no hay `continue-on-error`, ni
+`|| true`, ni `if: always()`. Los reportes se suben aunque la prueba falle,
+porque el `!cancelled()` está en el paso que sube el reporte y no en los jobs.
+PROD recibe la misma imagen que QA: los dos deploys usan el sha de la corrida
+y los dos smokes confirman el mismo commit.
 
 ### La misma imagen del front en QA y PROD
 
 Viene del TP6: la plantilla de nginx lee `BACKEND_URL`, `DNS_RESOLVER` y
-`PORT` del entorno al arrancar. Adentro de la imagen quedan los estáticos y
-la plantilla. En el VPS cada entorno es un proyecto de Compose con su red, así
-que el nombre `notia-api` resuelve a la API de **ese** entorno con el mismo
-valor.
+`PORT` al arrancar, y adentro de la imagen quedan los archivos de la SPA y la
+plantilla. En el VPS cada entorno es un proyecto de Compose con su propia
+red, así que `notia-api` resuelve a la API de ese entorno.
 
-### Problemas encontrados
+### Problemas
 
-**Dependabot en conflicto.** Su PR de `hono` tocaba `pnpm-lock.yaml`, que el
-PR de Playwright también cambió. No lo resolví a mano: le pedí a Dependabot
-que regenere su rama sobre `main` (`@dependabot rebase`).
+El PR de Dependabot que subía `hono` tocaba `pnpm-lock.yaml`, igual que el PR
+de Playwright, y quedó en conflicto. No lo resolví a mano: le pedí a
+Dependabot que rehiciera su rama sobre `main` comentando `@dependabot rebase`.
 
-**Las e2e tardan un minuto cuando fallan.** El click espera el botón hasta el
-timeout y reintenta una vez: la corrida roja tardó unos cuatro minutos más
-que la verde. Es el precio de no confundir lentitud con rotura.
+Cuando la e2e falla tarda mucho: cada click espera el botón hasta el timeout
+de un minuto y después reintenta. La corrida roja tardó unos cuatro minutos
+más que la verde. Prefiero eso a bajar los timeouts y que una demora de QA
+parezca una rotura.
 
-### Declaración de uso de IA
+Dos merges seguidos: al mergear el #44 mientras la corrida del #40 todavía
+estaba en curso, el workflow canceló la del #40. Es el `concurrency` que puse
+en el TP4 con `cancel-in-progress: true`, que deja sólo la última corrida de
+cada rama. Para el código está bien (la nueva incluye lo anterior), pero
+también puede cancelar una corrida que está esperando mi aprobación. Desde
+ahí no mergeo nada mientras haya una corrida esperando para PROD.
 
-Usé **Claude Code**. Fue asistida la escritura de las dos suites, la
-configuración de Playwright, los jobs del workflow, la validación del texto
-vacío en la API con su test, la rotura y el arreglo del botón, y esta
-sección. No fue asistida la elección de qué flujo es el de todos los días, ni
-la aprobación de PROD.
+### Uso de IA
 
-**Qué verifica cada assert, y qué no.** Cada prueba afirma sobre el dato que
-ella misma creó (su texto único) o sobre el mensaje de error. No están
-cubiertos: editar un item, el deshacer por link, la vista de chats y la de
-log.
+Trabajé con Claude Code. Escribió las dos suites, la configuración de
+Playwright, los jobs del workflow, la validación del texto vacío en la API
+con su test, la rotura y el arreglo del botón, y la primera versión de esta
+sección. También propuso qué flujos probar. Yo hice los merges y aprobé los
+deploys a PROD.
 
-**Cómo lo verifiqué.** Las dos suites corrieron a mano contra QA antes del
-PR (las e2e 3/3; la integración 2/3, porque QA todavía no tenía el fix del
-texto vacío). Después, en las corridas enlazadas arriba: verde, rojo por la
-rotura, y verde hasta PROD.
+Cada prueba afirma sobre el dato que ella misma creó (su texto único) o sobre
+el mensaje de error. No están cubiertos editar un item, el deshacer por link,
+ni las vistas de chats y de log.
+
+Las dos suites las corrimos primero a mano contra QA: la e2e pasó 3 de 3 y
+la integración 2 de 3, porque QA todavía no tenía el arreglo del texto vacío.
+Después están las corridas de la tabla: verde, roja por la rotura y verde
+hasta PROD.
 
 ---
 
@@ -1575,150 +1526,138 @@ rotura, y verde hasta PROD.
 
 ### El riel y los providers
 
-**Plan C con el provider Docker**, sobre el mismo VPS donde corren QA y PROD.
-El entorno `preprod` (Postgres, API y web, con las imágenes `sha-<commit>`
-del registry) está declarado en [`infra/`](infra/) y nace y muere con un
-comando. No usé Render ni Neon porque mis entornos no viven ahí (TP6): crear
-preprod en otra nube habría sido declarar algo distinto de lo que despliego.
+Usé el plan C con el provider Docker, sobre el mismo VPS de QA y PROD. El
+entorno `preprod` (Postgres, API y web, con las imágenes `sha-<commit>` del
+registry) está declarado en [`infra/`](infra/), y se crea con
+`terraform apply` y se borra con `terraform destroy`. No usé Render ni Neon
+porque mis entornos no están ahí desde el TP6, y armar preprod en otra nube
+habría sido declarar algo distinto de lo que despliego.
 
 | Provider | Versión fijada |
 |---|---|
 | `kreuzwerker/docker` | `3.6.2` |
 | `hashicorp/random` | `3.7.2` |
-| Terraform | `>= 1.9` (probado con 1.17.0) |
+| Terraform | `>= 1.9` (lo probé con 1.17.0) |
 
-El provider Docker habla con el daemon del VPS por SSH, como el usuario
-`notia-deploy`. La clave **no** está en el código: la ruta llega por una
-variable, en un `.tfvars` que git ignora. Los secretos de preprod (la base,
-la app, la firma de sesión, el webhook) los genera `random_password` y viven
-sólo en el estado, que tampoco se versiona: adentro está la contraseña de la
-base en texto plano.
+El provider de Docker se conecta al daemon del VPS por SSH, como
+`notia-deploy`. La clave no está en el código: la ruta se pasa por una
+variable en un `.tfvars` que git ignora. Los secretos de preprod (la base, la
+app, la firma de la sesión y el webhook) los genera `random_password` y
+quedan sólo en el estado, que tampoco se sube porque tiene la contraseña de
+la base en texto plano.
 
-Se **derivan**, no se copian: `DATABASE_URL` sale del nombre del contenedor
-de Postgres y de la contraseña generada; `BACKEND_URL` del front sale del
-nombre del contenedor de la API.
+`DATABASE_URL` se arma con el nombre del contenedor de Postgres y la
+contraseña generada, y el `BACKEND_URL` del front sale del nombre del
+contenedor de la API. No hay nada copiado a mano.
 
-QA y PROD no se importaron ni se tocaron: preprod tiene su red, su volumen y
+A QA y PROD no los importé ni los toqué. Preprod tiene su red, su volumen y
 su puerto (8083), y antes y después de cada `destroy` y `apply` los dos
 seguían con el mismo commit.
 
-Cómo crearlo, en [`infra/README.md`](infra/README.md).
+Cómo crearlo está en [`infra/README.md`](infra/README.md).
 
-### Problemas encontrados
+### Problemas
 
-**El segundo `plan` nunca decía «No changes».** Después de un `apply`
-limpio, el plan quería **recrear** los tres contenedores. El daemon del VPS
-tiene opciones de log por defecto (`max-size: 10m`, `max-file: 3`) que Docker
-aplica aunque no se pidan; el estado las leía, mi código no las declaraba, y
-`log_opts` fuerza reemplazo. Las declaré igual que el daemon. Después pasó lo
-mismo con `memory_swap`, que Docker pone en el doble de la memoria: lo
-declaré también. Con las dos, el segundo plan dice «No changes». Es la
-lección del práctico: el código tiene que describir **todo** lo que el
-proveedor hace por defecto, o el plan no puede distinguir un cambio de un
-default.
+Después de un `apply` limpio, el segundo `plan` quería recrear los tres
+contenedores. El daemon del VPS tiene opciones de log por defecto
+(`max-size: 10m`, `max-file: 3`) que Docker aplica aunque no se pidan. El
+estado las leía, mi código no las tenía, y un cambio en `log_opts` obliga a
+recrear el contenedor. Las declaré igual que el daemon y apareció lo mismo
+con `memory_swap`, que Docker pone en el doble de la memoria. Con las dos
+declaradas, el segundo `plan` dice «No changes». Lo que saqué de esto es que
+el código tiene que decir también lo que el proveedor pone por defecto; si
+no, el plan no puede distinguir un cambio de un valor por defecto.
 
-**Homebrew no instalaba Terraform** en esta Mac (pedía actualizar las
-herramientas de línea de comandos de Xcode). Bajé el binario oficial de
-HashiCorp y verifiqué su checksum contra el `SHA256SUMS` publicado.
+Homebrew no instalaba Terraform en mi Mac porque pedía actualizar las
+herramientas de línea de comandos de Xcode. Bajé el binario de HashiCorp y
+comprobé el checksum contra el `SHA256SUMS` publicado.
 
-**El 8083 tuvo que abrirse en el firewall del proveedor**, igual que 8081 y
-8082. Mientras no estuvo abierto, preprod respondía desde el servidor y no
-desde afuera.
+Preprod responde desde adentro del servidor, pero para verlo desde afuera
+hay que abrir el 8083 en el firewall del proveedor, como pasó con el 8081 y
+el 8082.
 
-### Declaración de uso de IA
+### Uso de IA
 
-Usé **Claude Code**. Fue asistida la escritura de `infra/` y esta sección, y
-el diagnóstico del plan que no era idempotente. Lo verifiqué ejecutando:
-`apply` desde cero, segundo `plan` con «No changes», `destroy` sin que quede
-contenedor ni volumen, `apply` de nuevo con `/salud` respondiendo con la base
-viva, y QA y PROD intactos antes y después. En la defensa, preprod se crea
-en vivo.
+Trabajé con Claude Code. Escribió `infra/` y la primera versión de esta
+sección, y encontró por qué el plan no era idempotente. Lo verificamos
+corriéndolo: `apply` desde cero, un segundo `plan` con «No changes»,
+`destroy` sin que quede ningún contenedor ni el volumen, `apply` de nuevo con
+`/salud` respondiendo con la base, y QA y PROD iguales antes y después. En la
+defensa lo creo en vivo.
 
 ---
 
 ## TP9 — DevSecOps, observabilidad y feedback
 
-### Lo que quedó activo
+### Qué quedó activo
 
-| Pieza | Dónde se ve |
+| Qué | Dónde se ve |
 |---|---|
 | Dependabot: alertas, actualizaciones de seguridad y `dependabot.yml` (npm, actions, docker) | *Security → Dependabot* y [`.github/dependabot.yml`](.github/dependabot.yml) |
-| CodeQL, configuración por defecto | *Security → Code scanning*: JavaScript/TypeScript y Actions, sin hallazgos |
-| Push protection | *Settings → Advanced Security*: activa |
+| CodeQL con la configuración por defecto | *Security → Code scanning*, JavaScript/TypeScript y Actions, sin hallazgos |
+| Push protection | *Settings → Advanced Security* |
 | Monitor externo sobre `/salud` de PROD | UptimeRobot, cada 5 minutos |
 | Sentry en el back y en el front de PROD | proyectos `notia-api` y `notia-web` |
-| La tarjeta nacida de un dato | [issue #45](https://github.com/mat1v1dal/notia-ingsoft3/issues/45), en el tablero del TP3 |
+| La tarjeta que salió de un dato | [issue #45](https://github.com/mat1v1dal/notia-ingsoft3/issues/45), en el tablero del TP3 |
 
 ### El PR de Dependabot que mergeé
 
-El [#37](https://github.com/mat1v1dal/notia-ingsoft3/pull/37) sube **hono de
-4.13.1 a 4.13.11**. Me animé por dos razones. La primera: trae un **arreglo
-de seguridad** (GHSA-5r4p-p66f-jhc7) en `serveStatic`, que decodificaba dos
-veces la ruta y dejaba saltear middlewares, y mi API usa `serveStatic` cuando
-sirve la PWA en un solo proceso. La segunda: es un *patch* dentro de la
-misma versión mayor, y mi pipeline lo verificó entero, con los tests de la
-capa HTTP, la integración contra QA y la e2e, antes de llegar a `main`.
+El [#37](https://github.com/mat1v1dal/notia-ingsoft3/pull/37) sube `hono`
+de 4.13.1 a 4.13.11. Lo mergeé por dos razones. Trae un arreglo de seguridad
+(GHSA-5r4p-p66f-jhc7) en `serveStatic`, que decodificaba dos veces la ruta y
+permitía saltear middlewares, y mi API usa `serveStatic` cuando sirve la PWA
+ella misma. Además es un *patch* dentro de la misma versión, y el pipeline lo
+probó entero antes de llegar a `main`: los tests de la capa HTTP, la
+integración contra QA y la e2e.
 
-Tuvo un detalle: chocaba con el `pnpm-lock.yaml` de otros PRs. No lo
-resolví a mano; le pedí a Dependabot que regenere su rama
-(`@dependabot rebase`).
+Quedó en conflicto con el `pnpm-lock.yaml` de otros PRs y le pedí a
+Dependabot que rehiciera la rama (`@dependabot rebase`).
 
-### El monitor, y la caída provocada
+### El monitor y la caída
 
-UptimeRobot consulta `http://201.32.128.192:8082/salud` cada 5 minutos. Ese
-endpoint toca la base, así que el monitor ve caída tanto si se cae el front
-como la API o Postgres.
+UptimeRobot consulta `http://201.32.128.192:8082/salud` cada 5 minutos. Como
+ese endpoint consulta la base, el monitor ve la caída si se cae el front, la
+API o Postgres.
 
-La caída la provoqué yo: bajé el contenedor del front de PROD
-(`docker compose stop notia-web`) a las **21:50:35** y lo volví a levantar a
-las **21:57:22** del 21/10.
+Bajé el front de PROD (`docker compose stop notia-web`) a las 21:50:35 del
+21/10 y lo volví a levantar a las 21:57:22.
 
-Y acá aprendí algo del propio monitor: **al principio vigilaba otra URL**. Lo
-había creado con `http://201.32.128.192`, el puerto 80, que es de otro
-proyecto del mismo servidor y estaba vivo. PROD llevaba dos minutos caído y
-el monitor seguía en *Up*. Lo corregí a `http://201.32.128.192:8082/salud` y
-en el primer chequeo lo vio:
+Al principio el monitor estaba mirando otra cosa. Lo había creado con
+`http://201.32.128.192`, que es el puerto 80, de otro proyecto del mismo
+servidor, y ése estaba vivo. PROD llevaba dos minutos caído y el monitor
+seguía en *Up*. Lo corregí a `http://201.32.128.192:8082/salud` y lo vio en
+el primer chequeo:
 
 ```
 21:52:47  timeout detectado desde Falkenstein
 21:53:19  confirmado desde Frankfurt
-21:53:50  confirmado desde Núremberg → incidente abierto
+21:53:50  confirmado desde Núremberg, se abre el incidente
 21:53:52  mail de DOWN enviado
 ```
 
-Desde que el monitor apuntó bien, **el aviso tardó 65 segundos**: no avisa
-con el primer fallo, lo confirma desde otras dos regiones para no mandar una
-falsa alarma por un corte de red suyo. Contado desde la caída real fueron
-**3 minutos 17 segundos**, y la diferencia es el error de configuración. Con
-el chequeo cada 5 minutos del plan gratis, el peor caso es casi 5 minutos sin
-que nadie se entere; lo achicaría un intervalo de 1 minuto. El UP lo registró
-en el chequeo siguiente a la vuelta.
+Desde que el monitor apuntó bien, el aviso tardó 65 segundos, porque antes
+de avisar confirma la caída desde otras dos regiones. Contado desde que bajé
+el contenedor fueron 3 minutos y 17 segundos, y esa diferencia fue mi error
+de configuración. Con un chequeo cada 5 minutos, que es lo que da el plan
+gratis, en el peor caso PROD puede estar casi 5 minutos caído sin aviso. Con
+un intervalo de 1 minuto se achicaría.
 
-La lección: **un monitor también se prueba**. Si no hubiera provocado la
-caída, el mío habría quedado en verde para siempre, vigilando algo que no era
-mi producción.
+Si no hubiera provocado la caída, el monitor habría seguido en verde
+vigilando algo que no era mi producción.
 
-El monitor queda **pausado** después de la prueba, como pide la guía.
+### Sentry
 
-### Sentry: qué falla, qué se usa y qué tarda
+El DSN del back está sólo en el `.env` de PROD en el servidor, así que QA y
+los tests no mandan nada. El del front está en el código, porque el DSN de un
+front sólo sirve para enviar datos y no es un secreto.
 
-El DSN del back está **sólo en PROD**, en su `.env` del servidor: QA y los
-tests no mandan nada. El del front va en el código, porque el de un front no
-es un secreto (sólo sirve para enviar datos).
+El error es `Falla de prueba del TP9`, el issue `NOTIA-API-1`, con el pedido
+que lo generó (`GET /api/falla`). Venía de un endpoint temporal que ya saqué.
+El primer DSN del back que cargué no correspondía a ningún proyecto (en
+Sentry sólo estaba creado el del front), así que esos primeros errores se
+perdieron. Cuando creé `notia-api` llegó al primer intento.
 
-- **El error**: `Falla de prueba del TP9`, issue `NOTIA-API-1` en *Issues*,
-  con el pedido que lo produjo (`GET /api/falla`). Salió de un endpoint
-  temporal que ya saqué. Un detalle: el primer DSN del back que cargué no
-  correspondía a ningún proyecto (Sentry tenía sólo el del front), así que
-  los primeros errores se perdieron; con el proyecto `notia-api` creado, el
-  error llegó al primer intento.
-- **La operación más usada**: `GET /salud`, 0,026 pedidos por minuto, pero
-  no la usa una persona: la consultan el healthcheck de Docker y el monitor.
-  La más usada **por el usuario** es `GET /api/items`, la carga de la
-  bandeja (0,020/min, P95 6,59 ms).
-- **La más lenta (P95)**: `POST /api/items/:id/cerrar`, **21,79 ms**. Tiene
-  sentido: es la única que abre una transacción, toma el lock de la fila,
-  actualiza y escribe el log del cambio. Las lecturas no pasan de 7 ms.
+Esto es lo que mostró la tabla de transacciones del back:
 
 | Transacción | TPM | P50 | P95 | Failure rate |
 |---|---|---|---|---|
@@ -1731,40 +1670,52 @@ es un secreto (sólo sirve para enviar datos).
 | `POST /login` | <0,01 | 2,93 ms | 12,60 ms | 0,25 |
 | `POST /api/items` | <0,01 | 9,84 ms | 13,18 ms | 0 |
 
-El *failure rate* de las lecturas no son errores de la app: son los `401` de
-pedidos sin sesión (la e2e de la contraseña equivocada pide `/api/items` sin
-cookie a propósito, y el primer pedido de cada navegador antes de entrar).
-Sentry los cuenta como fallas; para la app son la respuesta correcta. Es un
-dato que vale saber leer antes de alarmarse por él.
+La más pedida es `GET /salud`, pero la piden el healthcheck de Docker y el
+monitor, no una persona. La que más uso yo es `GET /api/items`, que carga la
+bandeja.
 
-Y `/salud` en P50 de 9 ms es la más lenta de las lecturas porque hace
-`select 1` contra la base en cada consulta del monitor.
+La más lenta en P95 es `POST /api/items/:id/cerrar`, con 21,79 ms. Tiene
+sentido: es la única que abre una transacción, bloquea la fila, la actualiza
+y escribe el cambio en el log. Las lecturas no pasan de 7 ms, salvo
+`/salud`, que tarda unos 9 ms porque consulta la base cada vez.
 
-**La tarjeta** ([#45](https://github.com/mat1v1dal/notia-ingsoft3/issues/45))
-nació del error: el endpoint de prueba seguía en PROD y cualquiera con sesión
-podía llenar el panel y gastar la cuota de errores. Se cerró en este mismo
-PR, que lo saca.
+El *failure rate* de las lecturas no son errores de la app. Son los `401` de
+pedidos sin sesión: la e2e de la contraseña equivocada pide `/api/items` sin
+cookie a propósito, y el navegador hace algún pedido antes de entrar. Sentry
+los cuenta como fallas, pero para la app es la respuesta correcta.
 
-### Problemas encontrados
+La tarjeta [#45](https://github.com/mat1v1dal/notia-ingsoft3/issues/45) salió
+del error. El endpoint de prueba seguía en PROD y cualquiera con sesión podía
+llenar el panel y gastar la cuota de errores del plan gratis. La cerró el
+mismo PR que lo saca.
 
-**El plugin de agente de Sentry pedía un instalador interactivo** y
-reiniciar la sesión del asistente. Creé los proyectos a mano desde la web.
+### Problemas
 
-**Agregar `@sentry/node` rompió el typecheck** en local: `drizzle-orm`
-quedó resuelto en dos variantes (con y sin `@opentelemetry/api`), y los
-tipos de una no aceptaban los de la otra. El lockfile estaba bien; eran
-enlaces viejos en `node_modules`. Un `pnpm install --frozen-lockfile` lo
-resolvió.
+Sentry ofrecía instalar un plugin para el asistente, pero pedía un instalador
+interactivo y reiniciar la sesión. Creé los proyectos a mano desde la web.
 
-### Declaración de uso de IA
+Agregar `@sentry/node` rompió el typecheck en mi máquina: `drizzle-orm`
+quedó en dos variantes (con y sin `@opentelemetry/api`) y los tipos de una no
+aceptaban los de la otra. El lockfile estaba bien, eran enlaces viejos en
+`node_modules`, y se arregló con `pnpm install --frozen-lockfile`.
 
-Usé **Claude Code**. Fue asistido: activar Dependabot, CodeQL y las
-alertas por API, el `dependabot.yml`, la integración de Sentry en el back y
-el front, el endpoint de prueba y su retiro, la tarjeta del tablero, la
-caída provocada y esta sección. No fue asistido: crear las cuentas de Sentry
-y UptimeRobot, y aprobar los deploys a PROD.
+Después de entregar revisé `decisiones.md` de punta a punta: reescribí las
+secciones del TP5 al TP9 y corregí las declaraciones de uso de IA, que en
+algunos puntos decían que había elegido yo cosas que propuso el asistente.
+Como la corrección navega el tag, moví `v9.0.0` al commit de esa revisión
+una vez que llegó a PROD. Los tags `v5.0.0` a `v8.0.0` quedaron donde
+estaban, con la versión anterior del texto.
 
-Lo verifiqué ejecutando: la API arranca con Sentry cargado (stack local con
-la imagen real), PROD respondió `500` en `/api/falla` y el error llegó a
-Sentry, el monitor registró la caída y la vuelta, y los tests confirman que
+### Uso de IA
+
+Trabajé con Claude Code. Activó Dependabot, CodeQL y las alertas por la API
+de GitHub, escribió el `dependabot.yml`, la integración de Sentry en el back
+y el front, el endpoint de prueba y su retiro, creó la tarjeta del tablero,
+bajó y levantó PROD para la caída, y escribió la primera versión de esta
+sección. Las cuentas de Sentry y UptimeRobot las creé yo, y también aprobé
+los deploys a PROD.
+
+Lo verificamos corriéndolo: la API arranca con Sentry cargado (probado en
+local con la imagen real), PROD respondió `500` en `/api/falla` y el error
+apareció en Sentry, el monitor registró la caída, y los tests confirman que
 el endpoint de prueba ya no existe.
