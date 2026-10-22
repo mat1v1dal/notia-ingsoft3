@@ -1633,3 +1633,113 @@ el diagnóstico del plan que no era idempotente. Lo verifiqué ejecutando:
 contenedor ni volumen, `apply` de nuevo con `/salud` respondiendo con la base
 viva, y QA y PROD intactos antes y después. En la defensa, preprod se crea
 en vivo.
+
+---
+
+## TP9 — DevSecOps, observabilidad y feedback
+
+### Lo que quedó activo
+
+| Pieza | Dónde se ve |
+|---|---|
+| Dependabot: alertas, actualizaciones de seguridad y `dependabot.yml` (npm, actions, docker) | *Security → Dependabot* y [`.github/dependabot.yml`](.github/dependabot.yml) |
+| CodeQL, configuración por defecto | *Security → Code scanning*: JavaScript/TypeScript y Actions, sin hallazgos |
+| Push protection | *Settings → Advanced Security*: activa |
+| Monitor externo sobre `/salud` de PROD | UptimeRobot, cada 5 minutos |
+| Sentry en el back y en el front de PROD | proyectos `notia-api` y `notia-web` |
+| La tarjeta nacida de un dato | [issue #45](https://github.com/mat1v1dal/notia-ingsoft3/issues/45), en el tablero del TP3 |
+
+### El PR de Dependabot que mergeé
+
+El [#37](https://github.com/mat1v1dal/notia-ingsoft3/pull/37) sube **hono de
+4.13.1 a 4.13.11**. Me animé por dos razones. La primera: trae un **arreglo
+de seguridad** (GHSA-5r4p-p66f-jhc7) en `serveStatic`, que decodificaba dos
+veces la ruta y dejaba saltear middlewares, y mi API usa `serveStatic` cuando
+sirve la PWA en un solo proceso. La segunda: es un *patch* dentro de la
+misma versión mayor, y mi pipeline lo verificó entero, con los tests de la
+capa HTTP, la integración contra QA y la e2e, antes de llegar a `main`.
+
+Tuvo un detalle: chocaba con el `pnpm-lock.yaml` de otros PRs. No lo
+resolví a mano; le pedí a Dependabot que regenere su rama
+(`@dependabot rebase`).
+
+### El monitor, y la caída provocada
+
+UptimeRobot consulta `http://201.32.128.192:8082/salud` cada 5 minutos. Ese
+endpoint toca la base, así que el monitor ve caída tanto si se cae el front
+como la API o Postgres.
+
+La caída la provoqué yo: bajé el contenedor del front de PROD
+(`docker compose stop notia-web`) a las **21:50:35** y lo volví a levantar a
+las **21:57:22** del 21/10.
+
+Y acá aprendí algo del propio monitor: **al principio vigilaba otra URL**. Lo
+había creado con `http://201.32.128.192`, el puerto 80, que es de otro
+proyecto del mismo servidor y estaba vivo. PROD llevaba dos minutos caído y
+el monitor seguía en *Up*. Lo corregí a `http://201.32.128.192:8082/salud` y
+en el primer chequeo lo vio:
+
+```
+21:52:47  timeout detectado desde Falkenstein
+21:53:19  confirmado desde Frankfurt
+21:53:50  confirmado desde Núremberg → incidente abierto
+21:53:52  mail de DOWN enviado
+```
+
+Desde que el monitor apuntó bien, **el aviso tardó 65 segundos**: no avisa
+con el primer fallo, lo confirma desde otras dos regiones para no mandar una
+falsa alarma por un corte de red suyo. Contado desde la caída real fueron
+**3 minutos 17 segundos**, y la diferencia es el error de configuración. Con
+el chequeo cada 5 minutos del plan gratis, el peor caso es casi 5 minutos sin
+que nadie se entere; lo achicaría un intervalo de 1 minuto. El UP lo registró
+en el chequeo siguiente a la vuelta.
+
+La lección: **un monitor también se prueba**. Si no hubiera provocado la
+caída, el mío habría quedado en verde para siempre, vigilando algo que no era
+mi producción.
+
+El monitor queda **pausado** después de la prueba, como pide la guía.
+
+### Sentry: qué falla, qué se usa y qué tarda
+
+El DSN del back está **sólo en PROD**, en su `.env` del servidor: QA y los
+tests no mandan nada. El del front va en el código, porque el de un front no
+es un secreto (sólo sirve para enviar datos).
+
+- **El error**: `Falla de prueba del TP9`, issue `NOTIA-API-1` en *Issues*,
+  con el pedido que lo produjo (`GET /api/falla`). Salió de un endpoint
+  temporal que ya saqué. Un detalle: el primer DSN del back que cargué no
+  correspondía a ningún proyecto (Sentry tenía sólo el del front), así que
+  los primeros errores se perdieron; con el proyecto `notia-api` creado, el
+  error llegó al primer intento.
+- **La operación más usada**: {{MAS_USADA}}.
+- **La más lenta (P95)**: {{MAS_LENTA}}.
+
+**La tarjeta** ([#45](https://github.com/mat1v1dal/notia-ingsoft3/issues/45))
+nació del error: el endpoint de prueba seguía en PROD y cualquiera con sesión
+podía llenar el panel y gastar la cuota de errores. Se cerró en este mismo
+PR, que lo saca.
+
+### Problemas encontrados
+
+**El plugin de agente de Sentry pedía un instalador interactivo** y
+reiniciar la sesión del asistente. Creé los proyectos a mano desde la web.
+
+**Agregar `@sentry/node` rompió el typecheck** en local: `drizzle-orm`
+quedó resuelto en dos variantes (con y sin `@opentelemetry/api`), y los
+tipos de una no aceptaban los de la otra. El lockfile estaba bien; eran
+enlaces viejos en `node_modules`. Un `pnpm install --frozen-lockfile` lo
+resolvió.
+
+### Declaración de uso de IA
+
+Usé **Claude Code**. Fue asistido: activar Dependabot, CodeQL y las
+alertas por API, el `dependabot.yml`, la integración de Sentry en el back y
+el front, el endpoint de prueba y su retiro, la tarjeta del tablero, la
+caída provocada y esta sección. No fue asistido: crear las cuentas de Sentry
+y UptimeRobot, y aprobar los deploys a PROD.
+
+Lo verifiqué ejecutando: la API arranca con Sentry cargado (stack local con
+la imagen real), PROD respondió `500` en `/api/falla` y el error llegó a
+Sentry, el monitor registró la caída y la vuelta, y los tests confirman que
+el endpoint de prueba ya no existe.

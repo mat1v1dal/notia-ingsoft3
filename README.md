@@ -21,6 +21,7 @@ inmutables, infraestructura como código, seguridad y observabilidad.
 | TP6 | CD: entornos, aprobación y despliegue | ✅ `v6.0.0` — [QA](http://201.32.128.192:8081) · [PROD](http://201.32.128.192:8082) |
 | TP7 | Imagen inmutable, integración y e2e como gate | ✅ `v7.0.0` |
 | TP8 | Infraestructura como código: `preprod` con Terraform | ✅ `v8.0.0` — [`infra/`](infra/) |
+| TP9 | DevSecOps, observabilidad y feedback | ✅ `v9.0.0` |
 
 ## La app del semestre: notia
 

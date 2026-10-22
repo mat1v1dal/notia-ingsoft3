@@ -220,9 +220,8 @@ test.each([
   expect(await db.select().from(itemChanges)).toHaveLength(0);
 });
 
-test("un error no atrapado responde 500 sin detalles internos", async () => {
+test("el endpoint de prueba del TP9 ya no existe", async () => {
   const res = await app.request("/api/falla", { headers: COOKIE });
 
-  expect(res.status).toBe(500);
-  expect(await res.json()).toEqual({ error: "error interno" });
+  expect(res.status).toBe(404);
 });
