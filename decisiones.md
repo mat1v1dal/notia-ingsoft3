@@ -1699,13 +1699,6 @@ quedó en dos variantes (con y sin `@opentelemetry/api`) y los tipos de una no
 aceptaban los de la otra. El lockfile estaba bien, eran enlaces viejos en
 `node_modules`, y se arregló con `pnpm install --frozen-lockfile`.
 
-Después de entregar revisé `decisiones.md` de punta a punta: reescribí las
-secciones del TP5 al TP9 y corregí las declaraciones de uso de IA, que en
-algunos puntos decían que había elegido yo cosas que propuso el asistente.
-Como la corrección navega el tag, moví `v9.0.0` al commit de esa revisión
-una vez que llegó a PROD. Los tags `v5.0.0` a `v8.0.0` quedaron donde
-estaban, con la versión anterior del texto.
-
 ### Uso de IA
 
 Trabajé con Claude Code. Activó Dependabot, CodeQL y las alertas por la API
