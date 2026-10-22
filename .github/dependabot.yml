@@ -1,0 +1,23 @@
+# Dependabot: dependencias vigiladas en los tres ecosistemas de notia.
+# Una vez por semana abre un PR por cada actualización; el pipeline lo
+# verifica igual que a cualquier otro cambio, y nada entra sin el verde.
+version: 2
+updates:
+  # Back y front son un monorepo pnpm: un solo lockfile en la raíz.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+
+  # Las actions del workflow también son dependencias, y también envejecen.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Las imágenes base de los Dockerfiles (node, nginx, postgres).
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly

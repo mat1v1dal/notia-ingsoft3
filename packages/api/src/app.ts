@@ -212,12 +212,6 @@ export function createApp(cfg: AppConfig) {
   // base a propósito: un /salud que sólo dice "el proceso vive" da verde con
   // la connection string rota. Y dice qué commit corre, que es lo único que
   // permite comprobar desde afuera que lo desplegado es lo verificado.
-  // TEMPORAL (TP9): un error a propósito para verlo llegar a Sentry. Detrás
-  // de la sesión, así no lo dispara cualquiera. Se saca al cerrar el TP.
-  app.get("/api/falla", () => {
-    throw new Error("Falla de prueba del TP9");
-  });
-
   // Todo error no atrapado va a Sentry con su pedido, y el usuario recibe un
   // 500 sin detalles internos.
   app.onError((err, c) => {
