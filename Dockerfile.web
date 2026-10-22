@@ -19,7 +19,7 @@ COPY packages/web packages/web
 RUN pnpm --filter @notia/web build
 
 # ---- Etapa 2: nginx sirve los estáticos ----
-FROM nginx:1.29-alpine AS runtime
+FROM nginx:1.31-alpine AS runtime
 # Va en templates/ y no en conf.d/: la imagen de nginx procesa las plantillas
 # al arrancar y escribe el resultado en conf.d/. Si fuera directo a conf.d/,
 # los ${…} quedarían sin reemplazar y nginx no arrancaría.
