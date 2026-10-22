@@ -1712,8 +1712,33 @@ es un secreto (sólo sirve para enviar datos).
   correspondía a ningún proyecto (Sentry tenía sólo el del front), así que
   los primeros errores se perdieron; con el proyecto `notia-api` creado, el
   error llegó al primer intento.
-- **La operación más usada**: {{MAS_USADA}}.
-- **La más lenta (P95)**: {{MAS_LENTA}}.
+- **La operación más usada**: `GET /salud`, 0,026 pedidos por minuto, pero
+  no la usa una persona: la consultan el healthcheck de Docker y el monitor.
+  La más usada **por el usuario** es `GET /api/items`, la carga de la
+  bandeja (0,020/min, P95 6,59 ms).
+- **La más lenta (P95)**: `POST /api/items/:id/cerrar`, **21,79 ms**. Tiene
+  sentido: es la única que abre una transacción, toma el lock de la fila,
+  actualiza y escribe el log del cambio. Las lecturas no pasan de 7 ms.
+
+| Transacción | TPM | P50 | P95 | Failure rate |
+|---|---|---|---|---|
+| `GET /salud` | 0,0264 | 9,20 ms | 14,44 ms | 0 |
+| `GET /api/items` | 0,0201 | 3,21 ms | 6,59 ms | 0,14 |
+| `GET /api/log` | 0,0153 | 4,48 ms | 7,29 ms | 0,14 |
+| `GET /api/chats` | <0,01 | 3,20 ms | 4,82 ms | 0,25 |
+| `POST /api/items/:id/cerrar` | <0,01 | 17,28 ms | 21,79 ms | 0 |
+| `GET /api/falla` | <0,01 | 3,76 ms | 15,51 ms | 1 |
+| `POST /login` | <0,01 | 2,93 ms | 12,60 ms | 0,25 |
+| `POST /api/items` | <0,01 | 9,84 ms | 13,18 ms | 0 |
+
+El *failure rate* de las lecturas no son errores de la app: son los `401` de
+pedidos sin sesión (la e2e de la contraseña equivocada pide `/api/items` sin
+cookie a propósito, y el primer pedido de cada navegador antes de entrar).
+Sentry los cuenta como fallas; para la app son la respuesta correcta. Es un
+dato que vale saber leer antes de alarmarse por él.
+
+Y `/salud` en P50 de 9 ms es la más lenta de las lecturas porque hace
+`select 1` contra la base en cada consulta del monitor.
 
 **La tarjeta** ([#45](https://github.com/mat1v1dal/notia-ingsoft3/issues/45))
 nació del error: el endpoint de prueba seguía en PROD y cualquiera con sesión
