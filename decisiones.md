@@ -1568,3 +1568,68 @@ log.
 PR (las e2e 3/3; la integración 2/3, porque QA todavía no tenía el fix del
 texto vacío). Después, en las corridas enlazadas arriba: verde, rojo por la
 rotura, y verde hasta PROD.
+
+---
+
+## TP8 — Infraestructura como Código
+
+### El riel y los providers
+
+**Plan C con el provider Docker**, sobre el mismo VPS donde corren QA y PROD.
+El entorno `preprod` (Postgres, API y web, con las imágenes `sha-<commit>`
+del registry) está declarado en [`infra/`](infra/) y nace y muere con un
+comando. No usé Render ni Neon porque mis entornos no viven ahí (TP6): crear
+preprod en otra nube habría sido declarar algo distinto de lo que despliego.
+
+| Provider | Versión fijada |
+|---|---|
+| `kreuzwerker/docker` | `3.6.2` |
+| `hashicorp/random` | `3.7.2` |
+| Terraform | `>= 1.9` (probado con 1.17.0) |
+
+El provider Docker habla con el daemon del VPS por SSH, como el usuario
+`notia-deploy`. La clave **no** está en el código: la ruta llega por una
+variable, en un `.tfvars` que git ignora. Los secretos de preprod (la base,
+la app, la firma de sesión, el webhook) los genera `random_password` y viven
+sólo en el estado, que tampoco se versiona: adentro está la contraseña de la
+base en texto plano.
+
+Se **derivan**, no se copian: `DATABASE_URL` sale del nombre del contenedor
+de Postgres y de la contraseña generada; `BACKEND_URL` del front sale del
+nombre del contenedor de la API.
+
+QA y PROD no se importaron ni se tocaron: preprod tiene su red, su volumen y
+su puerto (8083), y antes y después de cada `destroy` y `apply` los dos
+seguían con el mismo commit.
+
+Cómo crearlo, en [`infra/README.md`](infra/README.md).
+
+### Problemas encontrados
+
+**El segundo `plan` nunca decía «No changes».** Después de un `apply`
+limpio, el plan quería **recrear** los tres contenedores. El daemon del VPS
+tiene opciones de log por defecto (`max-size: 10m`, `max-file: 3`) que Docker
+aplica aunque no se pidan; el estado las leía, mi código no las declaraba, y
+`log_opts` fuerza reemplazo. Las declaré igual que el daemon. Después pasó lo
+mismo con `memory_swap`, que Docker pone en el doble de la memoria: lo
+declaré también. Con las dos, el segundo plan dice «No changes». Es la
+lección del práctico: el código tiene que describir **todo** lo que el
+proveedor hace por defecto, o el plan no puede distinguir un cambio de un
+default.
+
+**Homebrew no instalaba Terraform** en esta Mac (pedía actualizar las
+herramientas de línea de comandos de Xcode). Bajé el binario oficial de
+HashiCorp y verifiqué su checksum contra el `SHA256SUMS` publicado.
+
+**El 8083 tuvo que abrirse en el firewall del proveedor**, igual que 8081 y
+8082. Mientras no estuvo abierto, preprod respondía desde el servidor y no
+desde afuera.
+
+### Declaración de uso de IA
+
+Usé **Claude Code**. Fue asistida la escritura de `infra/` y esta sección, y
+el diagnóstico del plan que no era idempotente. Lo verifiqué ejecutando:
+`apply` desde cero, segundo `plan` con «No changes», `destroy` sin que quede
+contenedor ni volumen, `apply` de nuevo con `/salud` respondiendo con la base
+viva, y QA y PROD intactos antes y después. En la defensa, preprod se crea
+en vivo.
