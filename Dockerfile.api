@@ -7,7 +7,7 @@
 # Acá viven typescript, vitest, drizzle-kit, vite y el resto del toolchain.
 # Nada de esto viaja a la imagen final: existe para que el build pueda correr
 # y para tener con qué comparar el tamaño.
-FROM node:24-alpine AS deps
+FROM node:26-alpine AS deps
 RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -20,7 +20,7 @@ RUN pnpm install --frozen-lockfile
 # ---- Etapa 2: solo dependencias de producción ----
 # Mismo lockfile, sin devDependencies. Se instala desde cero en vez de podar
 # la etapa anterior para que el resultado sea determinístico.
-FROM node:24-alpine AS prod-deps
+FROM node:26-alpine AS prod-deps
 RUN corepack enable
 WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -31,7 +31,7 @@ COPY packages/worker/package.json packages/worker/
 RUN pnpm install --prod --frozen-lockfile
 
 # ---- Etapa 3: runtime ----
-FROM node:24-alpine AS runtime
+FROM node:26-alpine AS runtime
 RUN corepack enable
 ENV NODE_ENV=production
 # El commit del que salió la imagen, que /salud informa. Lo pasa el pipeline
