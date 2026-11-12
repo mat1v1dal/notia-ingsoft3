@@ -13,8 +13,8 @@
 set -euo pipefail
 ENTORNO=$1; SHA=$2; CLAVE=$3
 case $ENTORNO in qa) PUERTO=8081 ;; prod) PUERTO=8082 ;; *) echo "entorno: qa | prod"; exit 2 ;; esac
-VPS=notia-deploy@201.32.128.192
-URL=http://201.32.128.192:$PUERTO
+VPS=notia-deploy@52.67.201.116
+URL=http://52.67.201.116:$PUERTO
 
 antes=$(curl -fsS --max-time 10 "$URL/salud" | sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p')
 echo "corriendo antes: ${antes:-desconocido}"
