@@ -1780,4 +1780,5 @@ que conteste en esa IP.
 
 Lo hizo Claude Code: creó la instancia, el security group y la Elastic IP
 con el CLI de AWS (yo inicié la sesión), escribió el script de arranque,
-cambió la IP en el repo y escribió esta sección. Yo aprobé el deploy a PROD.
+cambió la IP en el repo, escribió esta sección, mergeó el PR y aprobó el
+deploy a PROD, porque se lo pedí: el 12/11 no tenía tiempo de hacerlo yo.
