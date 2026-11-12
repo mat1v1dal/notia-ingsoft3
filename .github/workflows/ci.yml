@@ -209,7 +209,7 @@ jobs:
     # a propósito.
     environment:
       name: qa
-      url: http://201.32.128.192:8081
+      url: http://52.67.201.116:8081
     # Dos merges seguidos no se pisan: el segundo espera al primero.
     concurrency:
       group: deploy-qa
@@ -219,7 +219,7 @@ jobs:
       - uses: ./.github/actions/desplegar-en-vps
         with:
           entorno: qa
-          url: http://201.32.128.192:8081
+          url: http://52.67.201.116:8081
           clave-ssh: ${{ secrets.VPS_SSH_KEY }}
           commit: ${{ github.sha }}
 
@@ -229,7 +229,7 @@ jobs:
     # Después del deploy: prueba lo que QA está corriendo, no un build local.
     needs: deploy-qa
     env:
-      E2E_BASE_URL: http://201.32.128.192:8081
+      E2E_BASE_URL: http://52.67.201.116:8081
       E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
@@ -258,7 +258,7 @@ jobs:
     # a la integración. Y PROD espera a las dos.
     needs: integracion
     env:
-      E2E_BASE_URL: http://201.32.128.192:8081
+      E2E_BASE_URL: http://52.67.201.116:8081
       E2E_PASSWORD: ${{ secrets.E2E_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
@@ -297,7 +297,7 @@ jobs:
     # los lee nadie.
     environment:
       name: production
-      url: http://201.32.128.192:8082
+      url: http://52.67.201.116:8082
     concurrency:
       group: deploy-prod
       cancel-in-progress: false
@@ -309,6 +309,6 @@ jobs:
       - uses: ./.github/actions/desplegar-en-vps
         with:
           entorno: prod
-          url: http://201.32.128.192:8082
+          url: http://52.67.201.116:8082
           clave-ssh: ${{ secrets.VPS_SSH_KEY }}
           commit: ${{ github.sha }}
