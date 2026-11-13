@@ -1826,6 +1826,14 @@ lo dejé pasar porque el typecheck cubre `index.ts`, que es donde se usan
 `serve` y `serveStatic`, y porque después del merge la cadena lo prueba entero
 (QA, integración y e2e) antes de que yo apruebe PROD.
 
+El #59 cerró la alerta vieja (la #35), pero en el mismo momento aparecieron
+dos alertas nuevas (#46 y #47) que afectan de la 2.0.0 a la 2.1.5 y se
+arreglan en la 2.1.6. Subí a la 2.1.8 en un PR propio. El lockfile lo
+edité a mano, sólo en las líneas de `@hono/node-server`, porque mi `pnpm` local
+reescribía campos `libc` de paquetes que no tenían nada que ver. Lo verifiqué
+con `pnpm install --frozen-lockfile`, igual que en CI, más el typecheck y los
+101 tests del backend.
+
 ### Uso de IA
 
 Lo hizo Claude Code, porque se lo pedí: escribió `etiquetas.ts`, midió la
