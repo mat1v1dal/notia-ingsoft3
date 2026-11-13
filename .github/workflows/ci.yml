@@ -15,6 +15,14 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Mínimo privilegio para todos los jobs: el GITHUB_TOKEN sólo puede leer el
+# código. Los dos jobs que publican imágenes declaran su propio `permissions:`
+# (contents: read + packages: write), que reemplaza a éste. CodeQL marcaba los
+# otros siete jobs (actions/missing-workflow-permissions) porque corrían con el
+# permiso por defecto del repo en vez de uno declarado.
+permissions:
+  contents: read
+
 jobs:
   verificacion:
     name: Typecheck
