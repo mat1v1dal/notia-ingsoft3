@@ -81,7 +81,7 @@ jobs:
 
       - name: Publicar el reporte
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cobertura-backend
           path: coverage/backend
@@ -112,7 +112,7 @@ jobs:
 
       - name: Publicar el reporte
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cobertura-frontend
           path: coverage/frontend
@@ -254,7 +254,7 @@ jobs:
         run: pnpm --filter @notia/web integracion
       - name: Publicar el reporte
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-integracion
           path: packages/web/playwright-report
@@ -286,7 +286,7 @@ jobs:
         run: pnpm --filter @notia/web e2e
       - name: Publicar el reporte
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-report-e2e
           path: |
