@@ -1784,3 +1784,50 @@ cambió la IP en el repo, escribió esta sección, y mergeó el PR porque
 se lo pedí: el 12/11 no tenía tiempo de hacerlo yo. El deploy a PROD lo
 aprobé yo: Claude Code no pudo, y está bien que así sea, porque esa
 aprobación es el control humano del environment `production`.
+
+## Después de la P2: los huecos del backend (13/11/2026)
+
+Lo hice el día del recuperatorio, después de la P2 y no durante el TP5 ni el TP9.
+Lo dejo así, con su fecha. No toqué fechas ni historial para que parezca de antes.
+
+### El umbral del backend, frenando un PR (TP5)
+
+Los dos PRs de la demostración del TP5 son del frontend: el #28, que se
+mergeó, y el #30, que sigue frenado. El job *Tests y cobertura del backend*
+nunca se había puesto en rojo, así que el umbral del backend (90 % de líneas)
+estaba escrito en la config pero nunca se lo había visto frenar nada.
+
+El **#65** es la contraparte del #30 para el backend. Agrega
+`packages/core/src/etiquetas.ts` (`normalizarEtiquetas`) sin tests. Compila,
+pasa el typecheck y pasan los 101 tests del backend, pero las líneas bajan de
+92,4 % a **88,47 %** (medido local: 791 de 894). Vitest corta con
+`ERROR: Coverage for lines (88.47%) does not meet global threshold (90%)`.
+Queda abierto y en rojo, como el #30.
+
+### Permisos mínimos en el workflow (TP9)
+
+CodeQL tenía 7 alertas abiertas `actions/missing-workflow-permissions` en
+`ci.yml`: los jobs que no declaraban `permissions:` corrían con el permiso
+por defecto del repo. Agregué `permissions: contents: read` a nivel del
+workflow. Los dos jobs que publican imágenes ya tenían su propio bloque
+(`contents: read` + `packages: write`), que reemplaza al del workflow, así que
+siguen pudiendo publicar.
+
+Lo que descarté: declarar `permissions:` job por job. Es más largo y, si
+mañana se agrega un job y nadie se acuerda, vuelve a quedar con el default.
+Con el bloque arriba, un job nuevo arranca con sólo lectura.
+
+### `@hono/node-server` 2.x (TP9)
+
+En el TP9 mergeé el #37 (hono), pero el `serveStatic` que usa mi API es el de
+`@hono/node-server` (`packages/api/src/index.ts:2`). Su alerta de Dependabot
+seguía abierta. Mergeé el #59, que es el que lo sube a 2.x. Es un salto mayor:
+lo dejé pasar porque el typecheck cubre `index.ts`, que es donde se usan
+`serve` y `serveStatic`, y porque después del merge la cadena lo prueba entero
+(QA, integración y e2e) antes de que yo apruebe PROD.
+
+### Uso de IA
+
+Lo hizo Claude Code, porque se lo pedí: escribió `etiquetas.ts`, midió la
+cobertura en local, abrió el #65, cambió `ci.yml`, actualizó y mergeó el #59 y
+escribió esta sección. El deploy a PROD lo apruebo yo.
