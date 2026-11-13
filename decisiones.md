@@ -1712,3 +1712,75 @@ Lo verificamos corriéndolo: la API arranca con Sentry cargado (probado en
 local con la imagen real), PROD respondió `500` en `/api/falla` y el error
 apareció en Sentry, el monitor registró la caída, y los tests confirman que
 el endpoint de prueba ya no existe.
+
+## Después de la P2 — el VPS venció y los entornos pasaron a AWS (12/11/2026)
+
+Esta sección es posterior a la entrega y a la defensa del 23/10. No cambia
+nada de lo que se corrigió: todo lo de arriba describe el repo como estaba
+al corte. La escribo porque el 10/11 QA y PROD dejaron de responder (el VPS
+venció el 29/10, como avisaba la sección del TP6) y para el recuperatorio del
+13/11 los dos entornos tienen que estar vivos.
+
+### Qué cambió
+
+Sólo el servidor. Ahora es una EC2 `t3.small` (2 GB, `amd64` como las
+imágenes) en `sa-east-1`, con una Elastic IP fija: `52.67.201.116`. La armé
+igual que el VPS anterior, para que el pipeline no cambie:
+
+- SSH en el puerto 5078. El 22 queda cerrado en el security group.
+- El usuario `notia-deploy`, en el grupo `docker`, sólo con su clave.
+- `/srv/notia/qa` y `/srv/notia/prod`, cada uno con su `.env`.
+- Los límites de logs del daemon que declara `infra/main.tf`.
+- Abiertos 8081 (QA), 8082 (PROD) y 8083 (preprod).
+
+En el repo cambié la IP y la huella del host en
+`.github/actions/desplegar-en-vps/action.yml`, las URLs de los environments
+en `ci.yml`, el default de `playwright.config.ts`, `deploy/rollback.sh`,
+`infra/variables.tf`, `infra/outputs.tf` y el README. En GitHub actualicé el
+secret `VPS_SSH_KEY` de `qa` y de `production` con la clave nueva. La
+cadena (imagen por sha, deploy a QA, integración, e2e, aprobación, PROD,
+smoke) es la misma.
+
+También cambié el secret `E2E_PASSWORD`: la contraseña de la app vivía en
+el `.env` del VPS y se perdió con él, así que generé una nueva para los dos
+entornos. El DSN de Sentry del back también estaba sólo en ese `.env`; lo
+volví a cargar en el de PROD y comprobé que fuera el del proyecto `notia-api`
+(termina en `4512297146908672`), no el del front.
+
+Antes de abrir el PR corrí a mano, contra QA, los mismos pasos de la action
+(copiar el compose, fijar el tag, `pull` y `up`) con la imagen de `main`
+(`sha-d5cda19…`), y el `smoke.sh` pasó al primer intento con ese commit.
+
+Las bases arrancan vacías: los datos del VPS anterior se perdieron con él.
+
+### Por qué EC2 y no otra cosa
+
+- **Fallback local (self-hosted runner en mi notebook).** Es la salida
+  oficial de las guías y no cuesta nada, pero las URLs pasan a ser
+  `localhost` y el pipeline depende de que la notebook esté prendida.
+- **Render + Neon (el riel de la guía).** Hubiera tenido que reescribir el
+  deploy, y mi TP8 usa el provider Docker sobre el servidor: dejaba de
+  encajar. Un día antes de defender, descartado.
+- **EC2.** Es una máquina con Docker, igual que el VPS. El deploy por SSH,
+  el compose y el Terraform siguen siendo los mismos. La cuenta está en el
+  plan gratuito de AWS y los créditos cubren la instancia y la IP.
+
+### Problemas
+
+El primer arranque dejó el SSH sin escuchar. En Ubuntu 24.04 el SSH se
+activa por socket y el puerto lo genera systemd a partir de `sshd_config`;
+mi primer script pisaba el socket a mano y lo dejó sin puerto. Como el
+script de arranque corre una sola vez, terminé esa instancia y levanté otra
+con `Port 5078` en `/etc/ssh/sshd_config.d/`. La Elastic IP pasó a la nueva
+y la IP no cambió. La huella del host la tomé de la consola de la instancia,
+no de un `ssh-keyscan`: así sé que es la del servidor y no la de cualquiera
+que conteste en esa IP.
+
+### Uso de IA
+
+Lo hizo Claude Code: creó la instancia, el security group y la Elastic IP
+con el CLI de AWS (yo inicié la sesión), escribió el script de arranque,
+cambió la IP en el repo, escribió esta sección, y mergeó el PR porque
+se lo pedí: el 12/11 no tenía tiempo de hacerlo yo. El deploy a PROD lo
+aprobé yo: Claude Code no pudo, y está bien que así sea, porque esa
+aprobación es el control humano del environment `production`.

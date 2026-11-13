@@ -1,7 +1,7 @@
 variable "docker_host" {
   description = "Dónde corre Docker. El VPS, por SSH, como el usuario de deploy."
   type        = string
-  default     = "ssh://notia-deploy@201.32.128.192:5078"
+  default     = "ssh://notia-deploy@52.67.201.116:5078"
 }
 
 variable "ssh_key" {

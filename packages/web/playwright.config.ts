@@ -10,7 +10,7 @@ import { defineConfig, devices } from "@playwright/test";
  * La dirección y la contraseña llegan por el entorno; los defaults sirven
  * para correrlas a mano contra QA.
  */
-const BASE = process.env.E2E_BASE_URL ?? "http://201.32.128.192:8081";
+const BASE = process.env.E2E_BASE_URL ?? "http://52.67.201.116:8081";
 
 export default defineConfig({
   testDir: "./e2e",
